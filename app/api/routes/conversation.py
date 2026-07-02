@@ -13,7 +13,6 @@ from app.models.conversation import MessageRole, MessageStatus
 from app.models.activity_log import ActivityType
 from app.services.conversation_service import ConversationService, ActivityLogService
 from app.services.crew_service import CrewService, AgentService
-from app.core.langgraph.supervisor import create_supervisor_graph
 from app.services.ai_provider import ai_provider
 from app.schemas.crew import CrewResponse, AgentResponse
 from app.schemas.conversation import (
