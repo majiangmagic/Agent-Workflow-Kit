@@ -1,11 +1,10 @@
-"""Graph factory for the simple supervisor workflow."""
+"""Graph connections for the simple supervisor workflow."""
 
-import uuid
 from typing import Dict, List
 
 from langgraph.graph import END, StateGraph
 
-from app.core.langgraph.workflows.supervisor_simple.nodes import (
+from app.agents.supervisor.nodes import (
     analyze_input,
     answer_directly,
     assign_tasks,
@@ -13,38 +12,12 @@ from app.core.langgraph.workflows.supervisor_simple.nodes import (
     combine_results,
     create_plan,
 )
-from app.core.langgraph.workflows.supervisor_simple.router import route_by_action
-from app.core.langgraph.workflows.supervisor_simple.state import (
-    SupervisorSimpleAction,
-    SupervisorSimpleState,
+from app.agents.supervisor.router import route_by_action
+from app.agents.supervisor.state import (
+    SupervisorAction,
+    SupervisorState,
 )
 from app.core.langgraph.workflows.registry import workflow_registry
-
-
-def build_initial_state(crew_id: str, agents: List[Dict]) -> SupervisorSimpleState:
-    """Build the initial state for a simple supervisor crew."""
-
-    agent_states = {}
-    for agent_config in agents:
-        agent_id = agent_config.get("id") or str(uuid.uuid4())
-        agent_states[agent_id] = {
-            "agent_id": agent_id,
-            "agent_name": agent_config["name"],
-            "messages": [],
-            "status": "idle",
-            "results": None,
-            "tools": agent_config.get("tools", []),
-        }
-
-    return {
-        "messages": [],
-        "user_input": None,
-        "plan": None,
-        "agents": agent_states,
-        "crew_id": crew_id,
-        "conversation_id": "",
-        "action": None,
-    }
 
 
 def create_supervisor_simple_graph(
@@ -52,7 +25,7 @@ def create_supervisor_simple_graph(
 ):
     """Create a compiled LangGraph for a simple supervisor agent crew."""
 
-    workflow = StateGraph(SupervisorSimpleState)
+    workflow = StateGraph(SupervisorState)
 
     workflow.add_node("analyze_input", analyze_input)
     workflow.add_node("answer_directly", answer_directly)
@@ -65,8 +38,8 @@ def create_supervisor_simple_graph(
         "analyze_input",
         route_by_action,
         {
-            SupervisorSimpleAction.ANSWER_DIRECTLY: "answer_directly",
-            SupervisorSimpleAction.CREATE_PLAN: "create_plan",
+            SupervisorAction.ANSWER_DIRECTLY: "answer_directly",
+            SupervisorAction.CREATE_PLAN: "create_plan",
         },
     )
     workflow.add_edge("create_plan", "assign_tasks")
@@ -75,9 +48,9 @@ def create_supervisor_simple_graph(
         "check_status",
         route_by_action,
         {
-            SupervisorSimpleAction.ASSIGN_TASKS: "assign_tasks",
-            SupervisorSimpleAction.CHECK_STATUS: "check_status",
-            SupervisorSimpleAction.COMBINE_RESULTS: "combine_results",
+            SupervisorAction.ASSIGN_TASKS: "assign_tasks",
+            SupervisorAction.CHECK_STATUS: "check_status",
+            SupervisorAction.COMBINE_RESULTS: "combine_results",
         },
     )
     workflow.add_edge("answer_directly", END)

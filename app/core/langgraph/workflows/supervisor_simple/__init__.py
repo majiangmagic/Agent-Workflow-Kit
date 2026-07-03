@@ -1,19 +1,19 @@
 """Simple supervisor workflow public API."""
 
-from app.core.langgraph.workflows.supervisor_simple.graph import (
-    build_initial_state,
-    create_supervisor_simple_graph,
-)
-from app.core.langgraph.workflows.supervisor_simple.state import (
+from app.agents.supervisor.state import (
     AgentState,
-    SupervisorSimpleAction,
-    SupervisorSimpleState,
+    build_initial_state,
+    SupervisorAction,
+    SupervisorState,
+)
+from app.core.langgraph.workflows.supervisor_simple.graph import (
+    create_supervisor_simple_graph,
 )
 
 __all__ = [
     "AgentState",
-    "SupervisorSimpleAction",
-    "SupervisorSimpleState",
+    "SupervisorAction",
+    "SupervisorState",
     "build_initial_state",
     "create_supervisor_simple_graph",
 ]
