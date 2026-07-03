@@ -15,7 +15,7 @@ from app.agents.supervisor.nodes import (
 from app.agents.supervisor.router import route_by_action
 from app.agents.supervisor.state import SupervisorAction
 from app.core.langgraph.workflows.supervisor_simple.state import (
-    SupervisorState,
+    SupervisorSimpleState,
 )
 from app.core.langgraph.workflows.registry import workflow_registry
 
@@ -25,7 +25,7 @@ def create_supervisor_simple_graph(
 ):
     """Create a compiled LangGraph for a simple supervisor agent crew."""
 
-    workflow = StateGraph(SupervisorState)
+    workflow = StateGraph(SupervisorSimpleState)
 
     workflow.add_node("analyze_input", analyze_input)
     workflow.add_node("answer_directly", answer_directly)
