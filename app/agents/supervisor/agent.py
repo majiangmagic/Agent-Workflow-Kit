@@ -1,4 +1,4 @@
-"""Supervisor agent capabilities used by orchestrated workflows."""
+"""Supervisor agent capabilities used by supervisor-style workflows."""
 
 import json
 from typing import Any, Dict, List

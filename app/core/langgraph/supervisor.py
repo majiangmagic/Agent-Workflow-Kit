@@ -1,20 +1,20 @@
 """Backward-compatible imports for the supervisor workflow.
 
-New code should import from app.core.langgraph.workflows.orchestrated or
+New code should import from app.core.langgraph.workflows.supervisor_simple or
 app.agents.supervisor.
 """
 
-from app.core.langgraph.workflows.orchestrated import (
+from app.core.langgraph.workflows.supervisor_simple import (
     AgentState,
-    OrchestratedAction,
-    OrchestratedState,
+    SupervisorSimpleAction,
+    SupervisorSimpleState,
     build_initial_state,
-    create_orchestrated_graph,
+    create_supervisor_simple_graph,
 )
 
-SupervisorAction = OrchestratedAction
-SupervisorState = OrchestratedState
-create_supervisor_graph = create_orchestrated_graph
+SupervisorAction = SupervisorSimpleAction
+SupervisorState = SupervisorSimpleState
+create_supervisor_graph = create_supervisor_simple_graph
 
 __all__ = [
     "AgentState",

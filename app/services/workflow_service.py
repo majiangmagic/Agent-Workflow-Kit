@@ -4,12 +4,14 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from app.core.langgraph.workflows.registry import workflow_registry
-from app.core.langgraph.workflows.orchestrated import create_orchestrated_graph  # noqa: F401
+from app.core.langgraph.workflows.supervisor_simple import (  # noqa: F401
+    create_supervisor_simple_graph,
+)
 from app.models.crew import Crew
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_WORKFLOW_TYPE = "orchestrated"
+DEFAULT_WORKFLOW_TYPE = "supervisor_simple"
 
 
 class WorkflowService:
