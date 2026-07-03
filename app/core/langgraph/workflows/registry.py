@@ -13,7 +13,7 @@ WorkflowFactory = Callable[..., object]
 class WorkflowRegistry:
     """Small in-process registry for workflow factories."""
 
-    def __init__(self, default_name: str = "supervisor") -> None:
+    def __init__(self, default_name: str = "supervisor_simple") -> None:
         self.default_name = default_name
         self._factories: Dict[str, WorkflowFactory] = {}
 
