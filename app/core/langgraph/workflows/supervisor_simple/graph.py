@@ -88,5 +88,3 @@ def create_supervisor_simple_graph(
 
 
 workflow_registry.register("supervisor_simple", create_supervisor_simple_graph)
-workflow_registry.register("orchestrated", create_supervisor_simple_graph)
-workflow_registry.register("supervisor", create_supervisor_simple_graph)
