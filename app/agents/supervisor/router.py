@@ -1,10 +1,10 @@
 """Routing helpers for the supervisor agent."""
 
 from app.agents.supervisor.state import SupervisorAction
-from app.agents.supervisor.state import SupervisorRuntimeState
+from app.agents.supervisor.state import SupervisorState
 
 
-def route_by_action(state: SupervisorRuntimeState) -> SupervisorAction:
+def route_by_action(state: SupervisorState) -> SupervisorAction:
     """Return the next action requested by the current state."""
 
     action = state.get("action")

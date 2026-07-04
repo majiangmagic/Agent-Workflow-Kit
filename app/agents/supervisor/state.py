@@ -25,9 +25,4 @@ class SupervisorState(TypedDict):
     user_input: Optional[str]
     plan: Optional[Dict[str, Any]]
     action: Optional[SupervisorAction]
-
-
-class SupervisorRuntimeState(SupervisorState):
-    """Runtime state used inside the supervisor agent graph."""
-
     agents: Dict[str, AgentState]

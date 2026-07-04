@@ -4,7 +4,6 @@ from app.agents.base import AgentState
 from app.agents.supervisor.agent import SupervisorAgent, supervisor_agent
 from app.agents.supervisor.state import (
     SupervisorAction,
-    SupervisorRuntimeState,
     SupervisorState,
 )
 
@@ -21,7 +20,6 @@ __all__ = [
     "AgentState",
     "SupervisorAction",
     "SupervisorAgent",
-    "SupervisorRuntimeState",
     "SupervisorState",
     "create_supervisor_graph",
     "supervisor_agent",

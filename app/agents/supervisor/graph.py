@@ -11,13 +11,13 @@ from app.agents.supervisor.nodes import (
     create_plan,
 )
 from app.agents.supervisor.router import route_by_action
-from app.agents.supervisor.state import SupervisorAction, SupervisorRuntimeState
+from app.agents.supervisor.state import SupervisorAction, SupervisorState
 
 
 def create_supervisor_graph():
     """Create the supervisor agent's internal LangGraph."""
 
-    graph = StateGraph(SupervisorRuntimeState)
+    graph = StateGraph(SupervisorState)
 
     graph.add_node("analyze_input", analyze_input)
     graph.add_node("answer_directly", answer_directly)

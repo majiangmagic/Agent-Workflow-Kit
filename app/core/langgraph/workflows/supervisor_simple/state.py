@@ -37,6 +37,7 @@ def build_initial_state(crew_id: str, agents: List[Dict]) -> SupervisorSimpleSta
             "user_input": None,
             "plan": None,
             "action": None,
+            "agents": agent_states,
         },
         "agents": agent_states,
         "crew_id": crew_id,

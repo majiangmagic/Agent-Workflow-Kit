@@ -6,10 +6,10 @@ from typing import Any, Dict
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.supervisor import supervisor_agent
-from app.agents.supervisor.state import SupervisorAction, SupervisorRuntimeState
+from app.agents.supervisor.state import SupervisorAction, SupervisorState
 
 
-def analyze_input(state: SupervisorRuntimeState) -> Dict[str, Any]:
+def analyze_input(state: SupervisorState) -> Dict[str, Any]:
     """Use the supervisor agent to choose the next action."""
 
     user_input = state["user_input"]
@@ -24,7 +24,7 @@ def analyze_input(state: SupervisorRuntimeState) -> Dict[str, Any]:
     }
 
 
-def answer_directly(state: SupervisorRuntimeState) -> Dict[str, Any]:
+def answer_directly(state: SupervisorState) -> Dict[str, Any]:
     """Use the supervisor agent to answer without delegation."""
 
     response = supervisor_agent.answer_directly(state["messages"])
@@ -35,7 +35,7 @@ def answer_directly(state: SupervisorRuntimeState) -> Dict[str, Any]:
     }
 
 
-def create_plan(state: SupervisorRuntimeState) -> Dict[str, Any]:
+def create_plan(state: SupervisorState) -> Dict[str, Any]:
     """Use the supervisor agent to create a JSON execution plan."""
 
     agent_names = [agent["agent_name"] for agent in state["agents"].values()]
@@ -61,7 +61,7 @@ def create_plan(state: SupervisorRuntimeState) -> Dict[str, Any]:
         }
 
 
-def assign_tasks(state: SupervisorRuntimeState) -> Dict[str, Any]:
+def assign_tasks(state: SupervisorState) -> Dict[str, Any]:
     """Assign the next pending plan step to an idle agent."""
 
     plan = state["plan"]
@@ -113,7 +113,7 @@ def assign_tasks(state: SupervisorRuntimeState) -> Dict[str, Any]:
     }
 
 
-def check_status(state: SupervisorRuntimeState) -> Dict[str, Any]:
+def check_status(state: SupervisorState) -> Dict[str, Any]:
     """Process working agents and update their results."""
 
     working_agents = {
@@ -174,7 +174,7 @@ def check_status(state: SupervisorRuntimeState) -> Dict[str, Any]:
     }
 
 
-def combine_results(state: SupervisorRuntimeState) -> Dict[str, Any]:
+def combine_results(state: SupervisorState) -> Dict[str, Any]:
     """Use the supervisor agent to combine all agent results."""
 
     results = []
