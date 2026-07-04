@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import BaseMessage
 
+from app.agents.base import AgentState
+
 
 class SupervisorAction(str, Enum):
     """Actions that the supervisor agent can request."""
@@ -23,3 +25,9 @@ class SupervisorState(TypedDict):
     user_input: Optional[str]
     plan: Optional[Dict[str, Any]]
     action: Optional[SupervisorAction]
+
+
+class SupervisorRuntimeState(SupervisorState):
+    """Runtime state used inside the supervisor agent graph."""
+
+    agents: Dict[str, AgentState]

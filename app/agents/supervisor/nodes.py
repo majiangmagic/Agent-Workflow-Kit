@@ -6,81 +6,65 @@ from typing import Any, Dict
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agents.supervisor import supervisor_agent
-from app.agents.supervisor.state import SupervisorAction
-from app.core.langgraph.workflows.supervisor_simple.state import (
-    SupervisorSimpleState,
-)
+from app.agents.supervisor.state import SupervisorAction, SupervisorRuntimeState
 
 
-def analyze_input(state: SupervisorSimpleState) -> Dict[str, Any]:
-    """Use the supervisor agent to choose the next workflow action."""
+def analyze_input(state: SupervisorRuntimeState) -> Dict[str, Any]:
+    """Use the supervisor agent to choose the next action."""
 
-    supervisor_state = state["supervisor"]
-    user_input = supervisor_state["user_input"]
+    user_input = state["user_input"]
     if not user_input:
         return state
 
     action = SupervisorAction(supervisor_agent.decide_action(user_input))
     return {
         **state,
-        "supervisor": {
-            **supervisor_state,
-            "messages": supervisor_state["messages"] + [HumanMessage(content=user_input)],
-            "action": action,
-        },
+        "messages": state["messages"] + [HumanMessage(content=user_input)],
+        "action": action,
     }
 
 
-def answer_directly(state: SupervisorSimpleState) -> Dict[str, Any]:
+def answer_directly(state: SupervisorRuntimeState) -> Dict[str, Any]:
     """Use the supervisor agent to answer without delegation."""
 
-    supervisor_state = state["supervisor"]
-    response = supervisor_agent.answer_directly(supervisor_state["messages"])
+    response = supervisor_agent.answer_directly(state["messages"])
     return {
         **state,
-        "supervisor": {
-            **supervisor_state,
-            "messages": supervisor_state["messages"] + [response],
-            "action": None,
-        },
+        "messages": state["messages"] + [response],
+        "action": None,
     }
 
 
-def create_plan(state: SupervisorSimpleState) -> Dict[str, Any]:
+def create_plan(state: SupervisorRuntimeState) -> Dict[str, Any]:
     """Use the supervisor agent to create a JSON execution plan."""
 
-    supervisor_state = state["supervisor"]
     agent_names = [agent["agent_name"] for agent in state["agents"].values()]
 
     try:
-        plan = supervisor_agent.create_plan(supervisor_state["user_input"] or "", agent_names)
-        plan_message = f"Plan created with {len(plan['steps'])} steps to achieve: {plan['goal']}"
+        plan = supervisor_agent.create_plan(state["user_input"] or "", agent_names)
+        plan_message = (
+            f"Plan created with {len(plan['steps'])} steps to achieve: "
+            f"{plan['goal']}"
+        )
         return {
             **state,
-            "supervisor": {
-                **supervisor_state,
-                "messages": supervisor_state["messages"] + [AIMessage(content=plan_message)],
-                "plan": plan,
-                "action": SupervisorAction.ASSIGN_TASKS,
-            },
+            "messages": state["messages"] + [AIMessage(content=plan_message)],
+            "plan": plan,
+            "action": SupervisorAction.ASSIGN_TASKS,
         }
     except (json.JSONDecodeError, KeyError) as exc:
         return {
             **state,
-            "supervisor": {
-                **supervisor_state,
-                "messages": supervisor_state["messages"]
-                + [AIMessage(content=f"Failed to create a valid plan: {str(exc)}")],
-                "action": SupervisorAction.ANSWER_DIRECTLY,
-            },
+            "messages": state["messages"]
+            + [AIMessage(content=f"Failed to create a valid plan: {str(exc)}")],
+            "action": SupervisorAction.ANSWER_DIRECTLY,
         }
 
 
-def assign_tasks(state: SupervisorSimpleState) -> Dict[str, Any]:
+def assign_tasks(state: SupervisorRuntimeState) -> Dict[str, Any]:
     """Assign the next pending plan step to an idle agent."""
 
-    supervisor_state = state["supervisor"]
-    plan = supervisor_state["plan"]
+    plan = state["plan"]
     if not plan or not plan.get("steps"):
         return state
 
@@ -105,12 +89,9 @@ def assign_tasks(state: SupervisorSimpleState) -> Dict[str, Any]:
         return {
             **state,
             "agents": updated_agents,
-            "supervisor": {
-                **supervisor_state,
-                "action": SupervisorAction.COMBINE_RESULTS
-                if all_complete
-                else SupervisorAction.CHECK_STATUS,
-            },
+            "action": SupervisorAction.COMBINE_RESULTS
+            if all_complete
+            else SupervisorAction.CHECK_STATUS,
         }
 
     agent_name = next_step["agent"]
@@ -119,25 +100,22 @@ def assign_tasks(state: SupervisorSimpleState) -> Dict[str, Any]:
     updated_agents[agent_id] = {
         **updated_agents[agent_id],
         "status": "working",
-        "messages": updated_agents[agent_id]["messages"] + [HumanMessage(content=task)],
+        "messages": updated_agents[agent_id]["messages"]
+        + [HumanMessage(content=task)],
     }
 
     return {
         **state,
         "agents": updated_agents,
-        "supervisor": {
-            **supervisor_state,
-            "messages": supervisor_state["messages"]
-            + [AIMessage(content=f"Assigned task to {agent_name}: {task}")],
-            "action": SupervisorAction.CHECK_STATUS,
-        },
+        "messages": state["messages"]
+        + [AIMessage(content=f"Assigned task to {agent_name}: {task}")],
+        "action": SupervisorAction.CHECK_STATUS,
     }
 
 
-def check_status(state: SupervisorSimpleState) -> Dict[str, Any]:
+def check_status(state: SupervisorRuntimeState) -> Dict[str, Any]:
     """Process working agents and update their results."""
 
-    supervisor_state = state["supervisor"]
     working_agents = {
         agent_id: agent
         for agent_id, agent in state["agents"].items()
@@ -146,10 +124,7 @@ def check_status(state: SupervisorSimpleState) -> Dict[str, Any]:
     if not working_agents:
         return {
             **state,
-            "supervisor": {
-                **supervisor_state,
-                "action": SupervisorAction.ASSIGN_TASKS,
-            },
+            "action": SupervisorAction.ASSIGN_TASKS,
         }
 
     updated_agents = {**state["agents"]}
@@ -179,7 +154,9 @@ def check_status(state: SupervisorSimpleState) -> Dict[str, Any]:
                 "messages": updated_agents[agent_id]["messages"] + [response],
                 "results": {"task": task, "response": response.content},
             }
-            status_messages.append(f"{agent['agent_name']} completed task: {task[:30]}...")
+            status_messages.append(
+                f"{agent['agent_name']} completed task: {task[:30]}..."
+            )
         except Exception as exc:
             updated_agents[agent_id] = {
                 **updated_agents[agent_id],
@@ -192,18 +169,14 @@ def check_status(state: SupervisorSimpleState) -> Dict[str, Any]:
     return {
         **state,
         "agents": updated_agents,
-        "supervisor": {
-            **supervisor_state,
-            "messages": supervisor_state["messages"] + [AIMessage(content="\n".join(status_messages))],
-            "action": SupervisorAction.ASSIGN_TASKS,
-        },
+        "messages": state["messages"] + [AIMessage(content="\n".join(status_messages))],
+        "action": SupervisorAction.ASSIGN_TASKS,
     }
 
 
-def combine_results(state: SupervisorSimpleState) -> Dict[str, Any]:
+def combine_results(state: SupervisorRuntimeState) -> Dict[str, Any]:
     """Use the supervisor agent to combine all agent results."""
 
-    supervisor_state = state["supervisor"]
     results = []
     for agent in state["agents"].values():
         if agent["results"]:
@@ -211,25 +184,19 @@ def combine_results(state: SupervisorSimpleState) -> Dict[str, Any]:
 
     try:
         response = supervisor_agent.combine_results(
-            user_input=supervisor_state["user_input"] or "",
-            plan=supervisor_state["plan"],
+            user_input=state["user_input"] or "",
+            plan=state["plan"],
             results=results,
         )
         return {
             **state,
-            "supervisor": {
-                **supervisor_state,
-                "messages": supervisor_state["messages"] + [response],
-                "action": None,
-            },
+            "messages": state["messages"] + [response],
+            "action": None,
         }
     except Exception as exc:
         return {
             **state,
-            "supervisor": {
-                **supervisor_state,
-                "messages": supervisor_state["messages"]
-                + [AIMessage(content=f"Error combining results: {str(exc)}")],
-                "action": None,
-            },
+            "messages": state["messages"]
+            + [AIMessage(content=f"Error combining results: {str(exc)}")],
+            "action": None,
         }
