@@ -4,8 +4,8 @@ from typing import Any, Dict
 
 from langgraph.graph import StateGraph
 
-from app.agents.supervisor.graph import create_supervisor_graph
 from app.agents.supervisor.state import DelegatedAgentState, SupervisorState
+from app.core.langgraph.workflows.adapters.agent import create_agent_node
 
 
 def build_workflow_agents(workflow: StateGraph) -> Dict[str, DelegatedAgentState]:
@@ -23,30 +23,31 @@ def build_workflow_agents(workflow: StateGraph) -> Dict[str, DelegatedAgentState
     }
 
 
-def create_supervisor_workflow_node(workflow: StateGraph):
+def create_supervisor_workflow_node(workflow: StateGraph, supervisor_graph):
     """Create a workflow node that runs the reusable supervisor agent."""
 
-    supervisor_graph = create_supervisor_graph()
-
-    # run_supervisor 是注册到 workflow 里的节点函数。
-    # 当 workflow 流转到 "supervisor" 节点时，LangGraph 会调用它。
-    # 它会在运行时读取 workflow.nodes，动态生成当前工作流里的 agents。
-    # 然后把 workflow 的全局 state 转成 Supervisor Agent 自己的 state，
-    # 再调用 supervisor_graph.invoke(...) 执行 Supervisor Agent 内部流程。
-    def run_supervisor(state: Dict[str, Any]) -> Dict[str, Any]:
-        """Adapt workflow state into supervisor state and write the result back."""
-
+    # 下面两个函数只描述 supervisor 和 workflow state 的进出转换。
+    # 真正注册到 workflow 的节点函数由 create_agent_node(...) 统一生成。
+    def read_supervisor_state(state: Dict[str, Any]) -> SupervisorState:
+        """Read supervisor state from workflow state before running the agent."""
         agents = state["agents"] or build_workflow_agents(workflow)
-        supervisor_state: SupervisorState = {
+        return {
             **state["supervisor"],
             "agents": agents,
         }
-        updated_supervisor_state = supervisor_graph.invoke(supervisor_state)
 
+    def build_supervisor_update(
+        updated_supervisor_state: SupervisorState,
+    ) -> Dict[str, Any]:
+        """Write supervisor changes back to workflow state."""
         return {
-            **state,
             "supervisor": updated_supervisor_state,
             "agents": updated_supervisor_state["agents"],
         }
 
-    return run_supervisor
+    return create_agent_node(
+        "supervisor",
+        supervisor_graph,
+        read_agent_state=read_supervisor_state,
+        build_workflow_update=build_supervisor_update,
+    )
