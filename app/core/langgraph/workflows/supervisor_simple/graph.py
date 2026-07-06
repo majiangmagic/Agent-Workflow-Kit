@@ -4,7 +4,8 @@ from typing import Dict, List
 
 from langgraph.graph import END, StateGraph
 
-from app.agents.supervisor.graph import create_supervisor_graph
+import app.agents.supervisor.graph  # noqa: F401
+from app.agents.registry import agent_registry
 from app.core.langgraph.workflows.adapters.supervisor import create_supervisor_workflow_node
 from app.core.langgraph.workflows.supervisor_simple.state import SupervisorSimpleState
 from app.core.langgraph.workflows.registry import workflow_registry
@@ -16,7 +17,10 @@ def create_supervisor_simple_graph(
     """Create a compiled LangGraph for a simple supervisor agent crew."""
 
     workflow = StateGraph(SupervisorSimpleState)
-    supervisor_graph = create_supervisor_graph()
+    supervisor_graph_factory = agent_registry.get("supervisor")
+    if supervisor_graph_factory is None:
+        raise ValueError("Agent graph factory 'supervisor' is not registered")
+    supervisor_graph = supervisor_graph_factory()
 
     # create_supervisor_workflow_node() is called once while building the graph.
     workflow.add_node(

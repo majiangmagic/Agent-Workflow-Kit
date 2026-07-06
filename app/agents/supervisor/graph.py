@@ -12,9 +12,10 @@ from app.agents.supervisor.nodes import (
 )
 from app.agents.supervisor.router import route_by_action
 from app.agents.supervisor.state import SupervisorAction, SupervisorState
+from app.agents.registry import agent_registry
 
 
-def create_supervisor_graph():
+def create_graph():
     """Create the supervisor agent's internal LangGraph."""
 
     graph = StateGraph(SupervisorState)
@@ -50,3 +51,9 @@ def create_supervisor_graph():
     graph.set_entry_point("analyze_input")
 
     return graph.compile()
+
+
+create_supervisor_graph = create_graph
+
+# 注册给动态 Workflow 使用：外部可以通过字符串 "supervisor" 找到 create_graph 工厂。
+agent_registry.register("supervisor", create_graph)

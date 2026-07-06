@@ -1,24 +1,24 @@
-"""Registry for concrete agent runners."""
+"""Registry for agent graph factories."""
 
-from typing import Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
-from app.agents.base import AgentRunner
+AgentGraphFactory = Callable[..., Any]
 
 
 class AgentRegistry:
-    """Small registry used to look up agent runner implementations."""
+    """Small registry used to look up agent graph factories."""
 
     def __init__(self) -> None:
-        self._runners: Dict[str, AgentRunner] = {}
+        self.factories: Dict[str, AgentGraphFactory] = {}
 
-    def register(self, name: str, runner: AgentRunner) -> None:
-        self._runners[name] = runner
+    def register(self, name: str, factory: AgentGraphFactory) -> None:
+        self.factories[name] = factory
 
-    def get(self, name: str) -> Optional[AgentRunner]:
-        return self._runners.get(name)
+    def get(self, name: str) -> Optional[AgentGraphFactory]:
+        return self.factories.get(name)
 
     def names(self) -> list[str]:
-        return sorted(self._runners)
+        return sorted(self.factories)
 
 
 agent_registry = AgentRegistry()
