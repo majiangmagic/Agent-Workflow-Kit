@@ -30,7 +30,7 @@ def create_supervisor_workflow_node(workflow: StateGraph, supervisor_graph):
     # 真正注册到 workflow 的节点函数由 create_agent_node(...) 统一生成。
     def read_supervisor_state(state: Dict[str, Any]) -> SupervisorState:
         """Read supervisor state from workflow state before running the agent."""
-        agents = state["agents"] or build_workflow_agents(workflow)
+        agents = state["supervisor"]["agents"] or build_workflow_agents(workflow)
         return {
             **state["supervisor"],
             "agents": agents,
@@ -42,7 +42,6 @@ def create_supervisor_workflow_node(workflow: StateGraph, supervisor_graph):
         """Write supervisor changes back to workflow state."""
         return {
             "supervisor": updated_supervisor_state,
-            "agents": updated_supervisor_state["agents"],
         }
 
     return create_agent_node(

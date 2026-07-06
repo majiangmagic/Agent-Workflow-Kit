@@ -2,14 +2,13 @@
 
 from typing import Dict, List, TypedDict
 
-from app.agents.supervisor.state import DelegatedAgentState, SupervisorState
+from app.agents.supervisor.state import SupervisorState
 
 
 class SupervisorSimpleState(TypedDict):
     """Global state passed through the simple supervisor workflow."""
 
     supervisor: SupervisorState
-    agents: Dict[str, DelegatedAgentState]
     crew_id: str
     conversation_id: str
 
@@ -36,7 +35,6 @@ def build_initial_state(crew_id: str, agents: List[Dict]) -> SupervisorSimpleSta
             "action": None,
             "agents": agent_states,
         },
-        "agents": agent_states,
         "crew_id": crew_id,
         "conversation_id": "",
     }
