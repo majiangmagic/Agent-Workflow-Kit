@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Any
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 
@@ -14,6 +15,8 @@ from app.models.activity_log import ActivityType
 from app.services.conversation_service import ConversationService, ActivityLogService
 from app.services.crew_service import CrewService, AgentService
 from app.services.ai_provider import ai_provider
+from app.services.workflow_service import WorkflowService
+from app.core.langgraph.workflows.supervisor_simple import build_initial_state
 from app.schemas.crew import CrewResponse, AgentResponse
 from app.schemas.conversation import (
     ConversationCreate, 
@@ -27,6 +30,43 @@ from app.schemas.conversation import (
 
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
+
+
+def agent_to_workflow_config(agent) -> Dict[str, Any]:
+    """Convert a DB agent model into the workflow's simple agent config."""
+
+    return {
+        "id": str(agent.id),
+        "name": agent.name,
+        "description": agent.description,
+        "system_prompt": agent.system_prompt,
+        "model": agent.model,
+        "temperature": agent.temperature,
+        "tools": [],
+    }
+
+
+def message_to_langchain_message(message):
+    """Convert a stored conversation message into a LangChain message."""
+
+    if message.role == MessageRole.USER:
+        return HumanMessage(content=message.content)
+    if message.role in (MessageRole.ASSISTANT, MessageRole.AGENT):
+        return AIMessage(content=message.content)
+    if message.role == MessageRole.SYSTEM:
+        return SystemMessage(content=message.content)
+    return None
+
+
+def extract_workflow_response(final_state: Dict[str, Any]) -> str:
+    """Get the last supervisor AI message from a completed workflow run."""
+
+    supervisor_state = final_state.get("supervisor", {})
+    for message in reversed(supervisor_state.get("messages", [])):
+        if isinstance(message, AIMessage):
+            return str(message.content)
+
+    return "Workflow completed without an assistant response."
 
 
 @router.get("/", response_model=List[ConversationResponse])
@@ -237,33 +277,37 @@ async def chat(
         status=MessageStatus.COMPLETED,
     )
     
-    # Process non-streaming chat request using real OpenRouter API
-    # Get message history for context
     messages = await ConversationService.get_messages(db, conversation_id)
-    
-    # Format messages for the LLM
-    formatted_messages = []
-    # Add previous messages to context (limit to recent messages for context window)
-    for msg in messages[-10:]:  # Include only the 10 most recent messages
-        if msg.role == MessageRole.USER:
-            formatted_messages.append({"role": "user", "content": msg.content})
-        elif msg.role == MessageRole.ASSISTANT:
-            formatted_messages.append({"role": "assistant", "content": msg.content})
-    
-    # Create the LLM chain using the AIProvider
-    model = ai_provider.get_model(
-        model_name=supervisor.model,
-        temperature=0.7,  # Use moderate temperature for creative responses
-        streaming=False
+    history_messages = []
+    for message in messages:
+        if message.id == user_message.id:
+            continue
+
+        langchain_message = message_to_langchain_message(message)
+        if langchain_message is not None:
+            history_messages.append(langchain_message)
+
+    delegated_agents = [
+        agent_to_workflow_config(agent)
+        for agent in agents
+        if not agent.is_supervisor
+    ]
+    workflow = WorkflowService.create_workflow(
+        crew=crew,
+        agents=delegated_agents,
+        system_prompt=supervisor.system_prompt,
     )
-    
+    initial_state = build_initial_state(str(crew.id), delegated_agents)
+    initial_state["conversation_id"] = str(conversation_id)
+    initial_state["supervisor"]["messages"] = history_messages[-10:]
+    initial_state["supervisor"]["user_input"] = chat_request.message
+
     try:
-        # Invoke the model with the conversation history and current message
-        response = await model.ainvoke(formatted_messages + [{"role": "user", "content": chat_request.message}])
-        response_content = response.content
+        final_state = await workflow.ainvoke(initial_state)
+        response_content = extract_workflow_response(final_state)
     except Exception as e:
         # Log the error
-        print(f"Error calling OpenRouter API: {str(e)}")
+        print(f"Error running supervisor workflow: {str(e)}")
         # Provide a fallback response
         response_content = f"I apologize, but I encountered an issue processing your request. Please try again later."
         # You may want to log this to your monitoring system

@@ -6,6 +6,7 @@ import asyncio
 import uuid
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock, AsyncMock
+from langchain_core.messages import AIMessage
 
 from app.main import app
 from app.models.conversation import MessageRole, MessageStatus
@@ -27,7 +28,9 @@ def mock_services():
          patch("app.api.routes.conversation.CrewService") as mock_crew_service, \
          patch("app.api.routes.conversation.AgentService") as mock_agent_service, \
          patch("app.api.routes.conversation.ActivityLogService") as mock_activity_log_service, \
-         patch("app.api.routes.conversation.ai_provider") as mock_ai_provider:
+         patch("app.api.routes.conversation.ai_provider") as mock_ai_provider, \
+         patch("app.api.routes.conversation.WorkflowService") as mock_workflow_service, \
+         patch("app.api.routes.conversation.build_initial_state") as mock_build_initial_state:
 
         # Setup mock conversation service
         mock_conversation = MagicMock()
@@ -57,8 +60,11 @@ def mock_services():
         mock_agent = MagicMock()
         mock_agent.id = mock_agent_id
         mock_agent.name = "Supervisor"
+        mock_agent.description = "Supervisor agent"
         mock_agent.is_supervisor = True
         mock_agent.model = "openai/gpt-4-turbo"
+        mock_agent.system_prompt = "You are a supervisor."
+        mock_agent.temperature = 0.2
         # Use AsyncMock for async methods
         mock_agent_service.get_agents = AsyncMock(return_value=[mock_agent])
 
@@ -68,6 +74,27 @@ def mock_services():
         mock_model.ainvoke = AsyncMock(return_value=MagicMock(content="Test AI response"))
         mock_ai_provider.get_model.return_value = mock_model
 
+        mock_workflow = MagicMock()
+        mock_workflow.ainvoke = AsyncMock(
+            return_value={
+                "supervisor": {
+                    "messages": [AIMessage(content="Test workflow response")]
+                }
+            }
+        )
+        mock_workflow_service.create_workflow.return_value = mock_workflow
+        mock_build_initial_state.return_value = {
+            "supervisor": {
+                "messages": [],
+                "user_input": None,
+                "plan": None,
+                "action": None,
+                "agents": {},
+            },
+            "crew_id": str(mock_crew_id),
+            "conversation_id": "",
+        }
+
         # Setup activity log service
         mock_activity_log_service.log_activity = AsyncMock()
         
@@ -76,7 +103,9 @@ def mock_services():
             "crew_service": mock_crew_service,
             "agent_service": mock_agent_service,
             "activity_log_service": mock_activity_log_service,
-            "ai_provider": mock_ai_provider
+            "ai_provider": mock_ai_provider,
+            "workflow_service": mock_workflow_service,
+            "workflow": mock_workflow,
         }
 
 
@@ -102,9 +131,10 @@ async def test_chat_endpoint(mock_services):
     assert "content" in response_data
     # Note: ChatResponse schema doesn't include created_at field
     
-    # Verify the AI provider was called correctly
-    mock_services["ai_provider"].get_model.assert_called_once()
-    assert not mock_services["ai_provider"].get_model.call_args[1]["streaming"]
+    # Verify the workflow was called instead of the direct AI provider path
+    mock_services["workflow_service"].create_workflow.assert_called_once()
+    mock_services["workflow"].ainvoke.assert_called_once()
+    mock_services["ai_provider"].get_model.assert_not_called()
     
     # Verify conversation service methods were called
     mock_services["conversation_service"].get_conversation.assert_called_once()
