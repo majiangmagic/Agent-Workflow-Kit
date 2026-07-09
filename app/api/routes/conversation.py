@@ -425,7 +425,7 @@ async def chat_stream(
             )
             
             # Stream the response from OpenRouter
-            async for chunk in await model.astream(formatted_messages):
+            async for chunk in model.astream(formatted_messages):
                 if hasattr(chunk, 'content') and chunk.content is not None:
                     content_so_far += chunk.content
                     

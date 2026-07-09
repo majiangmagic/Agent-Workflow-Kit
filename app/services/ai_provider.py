@@ -13,15 +13,14 @@ from app.core.config import settings
 class AIProvider:
     """Service for managing AI model connections and interactions"""
     
+    DEFAULT_MODEL = "gpt-5.4-mini"
+
     def __init__(self):
-        self.openrouter_models = {
-            "google/gemini-2.5-flash": "gemini-2.5-flash",
-            "google/gemini-2.5-pro": "gemini-2.5-pro",
-        }
+        self.openrouter_models = {}
     
     def get_model(
         self,
-        model_name: str = "google/gemini-2.5-flash",
+        model_name: str = DEFAULT_MODEL,
         temperature: float = 0.2,
         streaming: bool = False,
         **kwargs
@@ -71,7 +70,7 @@ class AIProvider:
     def create_agent_chain(
         self,
         system_prompt: str,
-        model_name: str = "google/gemini-2.5-flash", 
+        model_name: str = DEFAULT_MODEL,
         temperature: float = 0.2,
         streaming: bool = False,
         **kwargs
