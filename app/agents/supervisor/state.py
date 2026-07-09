@@ -22,6 +22,9 @@ class DelegatedAgentState(TypedDict):
     # 这不是某个 Agent 自己的内部 state。
     # 它只是 Supervisor 当前用来模拟/跟踪被委派 agent 执行情况的记录。
     agent_name: str
+    system_prompt: str
+    model: str
+    temperature: float
     messages: List[BaseMessage]
     status: Literal["idle", "working", "complete", "error"]
     results: Optional[Dict[str, Any]]

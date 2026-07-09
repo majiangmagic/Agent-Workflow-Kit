@@ -14,6 +14,9 @@ def build_workflow_agents(workflow: StateGraph) -> Dict[str, DelegatedAgentState
     return {
         agent_name: {
             "agent_name": agent_name,
+            "system_prompt": f"You are {agent_name}, a specialized AI agent.",
+            "model": "gpt-4-turbo",
+            "temperature": 0.2,
             "messages": [],
             "status": "idle",
             "results": None,
@@ -28,7 +31,9 @@ def create_supervisor_extension(workflow: StateGraph) -> AgentNodeExtension:
 
     def prepare_supervisor_state(state: Dict[str, Any]) -> SupervisorState:
         """Prepare supervisor state before running the agent graph."""
-        agents = state["supervisor"]["agents"] or build_workflow_agents(workflow)
+        agents = state["supervisor"].get("agents")
+        if agents is None:
+            agents = build_workflow_agents(workflow)
         return {
             **state["supervisor"],
             "agents": agents,

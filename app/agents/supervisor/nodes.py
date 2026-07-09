@@ -3,10 +3,11 @@
 import json
 from typing import Any, Dict
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.agents.supervisor import supervisor_agent
 from app.agents.supervisor.state import SupervisorAction, SupervisorState
+from app.services.ai_provider import ai_provider
 
 
 def format_plan_summary(plan: Dict[str, Any]) -> str:
@@ -39,6 +40,24 @@ def find_unknown_plan_agents(
         if step.get("agent") not in known_agents
     }
     return sorted(agent for agent in unknown_agents if agent)
+
+
+def agent_has_task(agent: Dict[str, Any], task: str) -> bool:
+    """Return whether this task has already been assigned to the agent."""
+
+    return any(
+        isinstance(message, HumanMessage) and message.content == task
+        for message in agent["messages"]
+    )
+
+
+def last_assigned_task(agent: Dict[str, Any]) -> str:
+    """Return the most recent task assigned to an agent."""
+
+    for message in reversed(agent["messages"]):
+        if isinstance(message, HumanMessage):
+            return str(message.content)
+    return ""
 
 
 class AnalyzeInputNode:
@@ -86,10 +105,10 @@ class CreatePlanNode:
             unknown_agents = find_unknown_plan_agents(plan, agent_names)
             if unknown_agents:
                 error = (
-                    "执行计划包含不存在的 Agent："
-                    f"{', '.join(unknown_agents)}。"
-                    "可用 Agent："
-                    f"{', '.join(agent_names)}。"
+                    "The execution plan referenced unavailable agents: "
+                    f"{', '.join(unknown_agents)}. "
+                    "Available agents: "
+                    f"{', '.join(agent_names)}."
                 )
                 return {
                     **state,
@@ -115,7 +134,7 @@ class CreatePlanNode:
 
 
 class AssignTasksNode:
-    """Assign the next pending plan step to an idle agent."""
+    """Assign the next pending plan step to an available agent."""
 
     def __call__(self, state: SupervisorState) -> Dict[str, Any]:
         plan = state["plan"]
@@ -134,21 +153,37 @@ class AssignTasksNode:
         next_step = None
         for step in plan["steps"]:
             agent_key = agent_name_to_key.get(step["agent"])
-            if agent_key and state["agents"][agent_key]["status"] == "idle":
+            if (
+                agent_key
+                and state["agents"][agent_key]["status"] in ("idle", "complete")
+                and not agent_has_task(state["agents"][agent_key], step["task"])
+            ):
                 next_step = step
                 break
 
         if not next_step:
+            plan_steps = [
+                step for step in plan["steps"] if agent_name_to_key.get(step["agent"])
+            ]
+            all_assigned = all(
+                agent_has_task(
+                    updated_agents[agent_name_to_key[step["agent"]]], step["task"]
+                )
+                for step in plan_steps
+            )
             all_complete = all(
-                agent["status"] == "complete"
-                for agent in updated_agents.values()
-                if any(step["agent"] == agent["agent_name"] for step in plan["steps"])
+                updated_agents[agent_name_to_key[step["agent"]]]["status"] == "complete"
+                for step in plan_steps
+            )
+            any_working = any(
+                updated_agents[agent_name_to_key[step["agent"]]]["status"] == "working"
+                for step in plan_steps
             )
             return {
                 **state,
                 "agents": updated_agents,
                 "action": SupervisorAction.COMBINE_RESULTS
-                if all_complete
+                if all_assigned and (all_complete or not any_working)
                 else SupervisorAction.CHECK_STATUS,
             }
 
@@ -170,7 +205,7 @@ class AssignTasksNode:
 
 
 class CheckStatusNode:
-    """Check delegated task status without simulating agent execution."""
+    """Execute delegated agent tasks and update their status."""
 
     def __call__(self, state: SupervisorState) -> Dict[str, Any]:
         working_agents = {
@@ -189,24 +224,65 @@ class CheckStatusNode:
         updated_agents = {**state["agents"]}
 
         for agent_key, agent in working_agents.items():
-            updated_agents[agent_key] = {
-                **updated_agents[agent_key],
-                "status": "error",
-                "messages": updated_agents[agent_key]["messages"]
-                + [
-                    AIMessage(
-                        content=(
-                            f"{agent['agent_name']} 已收到任务，但当前 Workflow "
-                            "还没有接入这个真实 Agent 的执行节点。"
-                        )
-                    )
-                ],
-            }
+            task = last_assigned_task(agent)
+            if not task:
+                error = f"{agent['agent_name']} has no assigned task to execute."
+                updated_agents[agent_key] = {
+                    **updated_agents[agent_key],
+                    "status": "error",
+                    "results": {"error": error},
+                    "messages": updated_agents[agent_key]["messages"]
+                    + [AIMessage(content=error)],
+                }
+                continue
+
+            try:
+                model = ai_provider.get_model(
+                    model_name=agent.get("model", "gpt-4-turbo"),
+                    temperature=agent.get("temperature", 0.2),
+                )
+                response = model.invoke(
+                    [
+                        SystemMessage(
+                            content=agent.get(
+                                "system_prompt",
+                                (
+                                    f"You are {agent['agent_name']}, a specialized "
+                                    "AI agent. Complete the assigned task."
+                                ),
+                            )
+                        ),
+                        *agent["messages"],
+                    ]
+                )
+                response_content = str(response.content)
+                previous_response = ""
+                if agent.get("results") and agent["results"].get("response"):
+                    previous_response = agent["results"]["response"] + "\n\n"
+
+                updated_agents[agent_key] = {
+                    **updated_agents[agent_key],
+                    "status": "complete",
+                    "results": {
+                        "response": previous_response
+                        + f"Task: {task}\nResult: {response_content}"
+                    },
+                    "messages": updated_agents[agent_key]["messages"] + [response],
+                }
+            except Exception as exc:
+                error = f"{agent['agent_name']} failed to execute task: {str(exc)}"
+                updated_agents[agent_key] = {
+                    **updated_agents[agent_key],
+                    "status": "error",
+                    "results": {"error": error},
+                    "messages": updated_agents[agent_key]["messages"]
+                    + [AIMessage(content=error)],
+                }
 
         return {
             **state,
             "agents": updated_agents,
-            "action": SupervisorAction.COMBINE_RESULTS,
+            "action": SupervisorAction.ASSIGN_TASKS,
         }
 
 
@@ -215,9 +291,12 @@ class CombineResultsNode:
 
     def __call__(self, state: SupervisorState) -> Dict[str, Any]:
         results = []
+        errors = []
         for agent in state["agents"].values():
-            if agent["results"]:
+            if agent["results"] and agent["results"].get("response"):
                 results.append(f"{agent['agent_name']}: {agent['results']['response']}")
+            elif agent["results"] and agent["results"].get("error"):
+                errors.append(f"{agent['agent_name']}: {agent['results']['error']}")
 
         if not results:
             if state["plan"] and state["plan"].get("error"):
@@ -229,10 +308,12 @@ class CombineResultsNode:
                 }
 
             content = (
-                "当前 Workflow 尚未接入真实 Agent 执行节点，无法执行这个任务。"
+                "No available agent completed the task successfully."
                 if state["agents"]
-                else "没有符合要求的 Agent，无法执行这个任务。"
+                else "No delegated agents are available for this task."
             )
+            if errors:
+                content += "\n\nErrors:\n" + "\n".join(errors)
             return {
                 **state,
                 "messages": state["messages"] + [AIMessage(content=content)],
