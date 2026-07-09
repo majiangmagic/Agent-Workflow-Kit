@@ -1,290 +1,184 @@
-# LangGraph Multi-Agent Boilerplate
+# LangGraph 多 Agent 工作流模板
 
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Python Version](https://img.shields.io/badge/python-3.10%2B-blue)
+这是一个正在二次开发中的 LangGraph 多 Agent 后端项目。项目目标是构建一个“主脑 Supervisor + 多个真实子 Agent”的工作流系统，并通过 FastAPI 对外提供会话接口。
 
-A robust boilerplate for building AI agent clusters efficiently using LangGraph with supervisor architecture, Model Context Protocol (MCP) integration, and comprehensive API.
+当前版本不是完整产品，也不是最终架构定型版。它更像一个可继续演进的后端骨架：已经把 `chat` 接到了 Supervisor 工作流，并开始补真实子 Agent 执行链；但 AgentExecutor、MCP 工具闭环、数据库迁移、完整 API 路由挂载等能力还需要继续完善。
 
-## 🌟 Features
+## 当前状态
 
-- **Multi-Agent Architecture**: Build AI agent clusters with supervisor coordination
-- **LangGraph Integration**: Leverage LangGraph's powerful state management for agent workflows
-- **MCP Support**: Integrate tools via Model Context Protocol servers
-- **Streaming API**: Real-time streaming responses for interactive conversations
-- **Database Persistence**: Store conversations, agent states, and activity logs in PostgreSQL
-- **Cloud Storage**: File management with Cloudflare R2
-- **Comprehensive API**: RESTful endpoints with FastAPI, including Swagger documentation
-- **Security**: Authentication middleware, error handling, and security best practices
+目前主应用只挂载了会话路由：
 
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Python 3.10+
-- PostgreSQL
-- Cloudflare R2 account (optional, for cloud storage)
-- OpenRouter AI API key (or other compatible AI provider)
-
-### Installation
-
-1. **Clone the repository**
-
-```bash
-git clone https://github.com/yourusername/langgraph-multiagent-boilerplate.git
-cd langgraph-multiagent-boilerplate
+```python
+app.include_router(conversation.router, prefix="/api")
 ```
 
-2. **Set up a Python virtual environment**
+也就是说，当前可直接通过 FastAPI 主应用访问的核心接口主要是：
+
+- `GET /api/health`
+- `GET /api/conversations`
+- `POST /api/conversations`
+- `GET /api/conversations/{conversation_id}`
+- `PUT /api/conversations/{conversation_id}`
+- `DELETE /api/conversations/{conversation_id}`
+- `GET /api/conversations/{conversation_id}/messages`
+- `POST /api/conversations/{conversation_id}/messages`
+- `POST /api/conversations/{conversation_id}/chat`
+- `POST /api/conversations/{conversation_id}/chat/stream`
+
+`crew.py`、`storage.py` 等路由文件已经存在，但还没有在 `app/main.py` 中正式挂载到主应用。
+
+## 工作流架构
+
+当前主工作流是 `supervisor_simple`：
+
+```text
+POST /api/conversations/{conversation_id}/chat
+  -> Conversation API
+  -> WorkflowService
+  -> supervisor_simple workflow
+  -> supervisor agent graph
+  -> 写回 assistant message
+```
+
+Supervisor 内部节点如下：
+
+```text
+analyze_input
+  -> answer_directly
+  -> create_plan
+  -> assign_tasks
+  -> check_status
+  -> combine_results
+```
+
+当前逻辑：
+
+- 简单问题由 Supervisor 直接回答。
+- 复杂问题由 Supervisor 创建执行计划。
+- 执行计划会校验是否引用了不存在的 Agent。
+- 命中可用 Agent 后，会把任务写入该 Agent 的 delegated state。
+- `check_status` 会执行被分配任务的 Agent，并把结果写入 `results`。
+- `combine_results` 汇总子 Agent 结果并生成最终回复。
+
+## Delegated Agent State
+
+Supervisor 侧只保存调度需要的信息，不保存 Agent 定义快照。
+
+当前结构重点是：
+
+```python
+{
+    "agent_id": "...",
+    "agent_name": "...",
+    "messages": [],
+    "status": "idle | working | complete | error",
+    "results": None,
+    "error": None,
+    "tools": [],
+}
+```
+
+刻意不保存：
+
+- `system_prompt`
+- `model`
+- `temperature`
+
+这些属于 Agent 定义，后续应由独立 `AgentExecutor` 根据 `agent_id` 从数据库、registry 或配置中心读取。这样未来子 Agent 可以是单次 LLM 调用，也可以是多节点 LangGraph、MCP Agent、Browser Agent 或 Code Agent。
+
+## 重要限制
+
+当前还有几个关键限制：
+
+1. `chat/stream` 目前仍是直接调用 LLM streaming，没有走完整 workflow event stream。
+2. 子 Agent 执行逻辑还在 Supervisor 节点里，后续应该抽成独立 `AgentExecutor`。
+3. 当前子 Agent 执行仍是简化版 LLM 调用，尚未支持多节点 Agent Graph。
+4. MCP 工具模型和服务代码存在，但还没有形成完整的 Agent 工具调用闭环。
+5. 数据库迁移尚未完成，Alembic 还需要补。
+6. 主应用没有挂载全部 API router。
+7. 测试以 mock 和服务层测试为主，完整集成测试还不足。
+
+## 目录结构
+
+```text
+app/
+  agents/
+    supervisor/              # Supervisor agent 的状态、节点、路由和 prompt
+  api/
+    routes/
+      conversation.py        # 当前主应用已挂载的会话 API
+      crew.py                # Crew/Agent API，尚未在 main.py 挂载
+      storage.py             # Storage API，尚未在 main.py 挂载
+  core/
+    langgraph/
+      workflows/
+        supervisor_simple/   # 当前默认工作流
+        adapters/            # Agent graph 与 workflow state 的适配层
+  db/                        # SQLAlchemy base/session
+  models/                    # Crew、Agent、Conversation、ActivityLog 等模型
+  schemas/                   # Pydantic schema
+  services/                  # Crew、Conversation、Workflow、AI Provider 等服务
+```
+
+## 安装和运行
+
+建议使用 Python 3.10+。
 
 ```bash
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. **Install dependencies**
-
-```bash
+venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. **Configure environment variables**
+复制环境变量模板：
 
 ```bash
-cp .env.example .env
-# Edit .env with your settings (database, API keys, etc.)
+copy .env.example .env
 ```
 
-5. **Set up the database**
+按需配置：
 
-```bash
-# Create a PostgreSQL database
-# Then run migrations (once implemented)
-```
+- `DATABASE_URL`
+- `OPENROUTER_BASE_URL`
+- `OPENROUTER_API_KEY`
+- `OPENAI_API_KEY`
+- `JWT_SECRET_KEY`
+- `R2_*`
 
-6. **Run the server**
+启动服务：
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-7. **Access the API documentation**
+接口文档：
 
-- Swagger UI: http://localhost:8000/api/docs
-- ReDoc: http://localhost:8000/api/redoc
+- Swagger UI: `http://localhost:8000/api/docs`
+- ReDoc: `http://localhost:8000/api/redoc`
 
-## 📋 Project Structure
+## 当前推荐开发路线
 
-```
-langgraph-multiagent-boilerplate/
-├── app/
-│   ├── api/
-│   │   ├── exceptions.py       # Error handling
-│   │   ├── middleware/         # Security & auth middleware
-│   │   └── routes/             # API endpoints
-│   ├── core/
-│   │   ├── config.py           # Configuration management
-│   │   └── langgraph/          # LangGraph components
-│   ├── db/
-│   │   └── base.py             # Database setup
-│   ├── models/                 # SQLAlchemy models
-│   ├── schemas/                # Pydantic schemas
-│   ├── services/               # Business logic
-│   └── main.py                 # Application entry point
-├── tests/                      # Test suite
-├── .env.example                # Environment template
-├── pyproject.toml             # Python project metadata
-├── requirements.txt           # Dependencies
-├── README.md                  # This file
-├── PROJECT_OVERVIEW.md        # Detailed project documentation
-└── IMPLEMENTATION_TASKS.md    # Development roadmap
-```
+下一阶段建议优先做这些事：
 
-## 🧠 How It Works
+1. 挂载 `crew.py`、`storage.py` 等已有 router，让 API 闭环可用。
+2. 增加数据库迁移，保证本地和部署环境能稳定初始化。
+3. 抽象 `AgentExecutor`，让 Supervisor 不直接关心 Agent 怎么执行。
+4. 让 `AgentExecutor` 支持通过 `agent_id` 加载真实 Agent 配置。
+5. 支持子 Agent 自己是多节点 LangGraph。
+6. 接入 MCP tools，并把工具调用过程纳入 Agent 执行链。
+7. 把 `chat/stream` 改造成 workflow 事件流。
+8. 补集成测试，覆盖从创建 crew/agent/conversation 到 chat 的完整路径。
 
-### Multi-Agent System Architecture
+## 项目定位
 
-1. **AI Crews**: Each AI agent cluster contains multiple crews, each led by a supervisor agent
-2. **Supervisor Architecture**: The supervisor agent analyzes user input, creates plans, and assigns tasks to other agents
-3. **Tool Integration**: Agents can access external tools via MCP servers
-4. **Streaming Communication**: Real-time responses with event streaming
-5. **Persistence**: All conversations, states, and activities are stored in the database
+这个项目当前适合：
 
-### Example Flow
+- 继续开发 LangGraph 多 Agent 后端。
+- 研究 Supervisor 工作流如何接入 FastAPI。
+- 作为主脑调度多个真实 Agent 的早期骨架。
 
-1. User sends a message to a crew
-2. Supervisor agent receives the input via API call
-3. Supervisor analyzes the input and the crew's capabilities
-4. Supervisor either answers directly or creates a detailed plan
-5. If needed, supervisor assigns tasks to specialized agents
-6. Agents perform their tasks using attached MCP tools
-7. Supervisor collects results, analyzes them, and formulates a response
-8. Response is streamed back to the user
+暂时不适合：
 
-## 🔌 API Reference
-
-### Core Endpoints
-
-#### Crews and Agents
-
-- `GET /api/crews` - List all crews
-- `POST /api/crews` - Create a new crew
-- `GET /api/crews/{crew_id}` - Get crew details
-- `PUT /api/crews/{crew_id}` - Update a crew
-- `DELETE /api/crews/{crew_id}` - Delete a crew
-
-- `GET /api/agents` - List all agents
-- `POST /api/agents` - Create a new agent
-- `GET /api/agents/{agent_id}` - Get agent details
-- `PUT /api/agents/{agent_id}` - Update an agent
-- `DELETE /api/agents/{agent_id}` - Delete an agent
-
-#### Conversations
-
-- `GET /api/conversations` - List conversations
-- `POST /api/conversations` - Create a new conversation
-- `GET /api/conversations/{conversation_id}` - Get conversation details
-- `POST /api/conversations/{conversation_id}/chat` - Send a message and get a response
-- `POST /api/conversations/{conversation_id}/chat/stream` - Get streaming response
-
-See the Swagger documentation for the complete API reference.
-
-## 📝 Usage Examples
-
-### Creating a Crew with Agents
-
-```python
-import httpx
-
-# Create a new crew
-crew_data = {
-    "name": "Research Crew",
-    "description": "A crew specialized in research tasks",
-    "metadata": {"specialization": "research"}
-}
-
-response = httpx.post("http://localhost:8000/api/crews", json=crew_data)
-crew = response.json()
-crew_id = crew["id"]
-
-# Create a supervisor agent
-supervisor_data = {
-    "crew_id": crew_id,
-    "name": "Research Supervisor",
-    "description": "Supervises research operations",
-    "system_prompt": "You are a research supervisor responsible for coordinating research efforts.",
-    "model": "google/gemini-2.5-flash",
-    "is_supervisor": True,
-    "metadata": {}
-}
-
-httpx.post("http://localhost:8000/api/agents", json=supervisor_data)
-
-# Create specialized agents
-web_researcher_data = {
-    "crew_id": crew_id,
-    "name": "Web Researcher",
-    "description": "Specializes in web research",
-    "system_prompt": "You are a web researcher that finds accurate information online.",
-    "model": "claude-3-sonnet",
-    "is_supervisor": False,
-    "metadata": {"specialty": "web_search"}
-}
-
-httpx.post("http://localhost:8000/api/agents", json=web_researcher_data)
-```
-
-### Starting a Conversation
-
-```python
-# Create a conversation with a crew
-conversation_data = {
-    "user_id": "user123",
-    "crew_id": crew_id,
-    "title": "Research on AI trends"
-}
-
-response = httpx.post("http://localhost:8000/api/conversations", json=conversation_data)
-conversation = response.json()
-conversation_id = conversation["id"]
-
-# Send a message to the crew
-message_data = {
-    "message": "What are the latest trends in multi-agent AI systems?",
-    "metadata": {}
-}
-
-# For non-streaming response
-response = httpx.post(
-    f"http://localhost:8000/api/conversations/{conversation_id}/chat", 
-    json=message_data
-)
-print(response.json()["content"])
-
-# For streaming response
-with httpx.stream(
-    "POST",
-    f"http://localhost:8000/api/conversations/{conversation_id}/chat/stream",
-    json=message_data,
-    timeout=60.0
-) as response:
-    for chunk in response.iter_lines():
-        if chunk.startswith("data: "):
-            data = json.loads(chunk[6:])
-            if "choices" in data and data["choices"][0]["delta"].get("content"):
-                print(data["choices"][0]["delta"]["content"], end="")
-```
-
-## 🧪 Testing
-
-Run the test suite with:
-
-```bash
-pytest
-```
-
-## 🔧 Configuration
-
-Key environment variables:
-
-- `DATABASE_URL`: PostgreSQL connection string
-- `OPENROUTER_API_KEY`: OpenRouter API key
-- `MCP_SERVER_URL`: URL of the MCP server
-- `R2_ENDPOINT`, `R2_BUCKET_NAME`, etc.: Cloudflare R2 configuration
-- `JWT_SECRET_KEY`: Secret for JWT authentication
-- `DEBUG`: Enable debug mode
-
-See `.env.example` for a complete list of configuration options.
-
-## 🧩 Extending the Boilerplate
-
-### Adding New MCP Tools
-
-1. Register a new MCP server in the database
-2. Discover and register tools from the server
-3. Assign tools to agents
-
-### Creating Custom Agent Types
-
-1. Create a new agent with specialized system prompt
-2. Assign relevant MCP tools to the agent
-3. Add the agent to a crew
-
-### Implementing Custom Workflows
-
-1. Modify the supervisor logic in `app/core/langgraph/supervisor.py`
-2. Adjust the state graph to implement your custom workflow
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 📚 Resources
-
-- [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
-- [Model Context Protocol](https://langchain-ai.github.io/langgraph/agents/mcp/)
-- [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [SQLAlchemy Documentation](https://docs.sqlalchemy.org/)
+- 直接作为生产级多 Agent 平台使用。
+- 直接暴露公网使用。
+- 在没有补数据库迁移、鉴权、完整路由和测试前承担关键业务。
