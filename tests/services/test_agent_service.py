@@ -10,6 +10,7 @@ from typing import List, Dict, Any
 from sqlalchemy import select
 
 from app.services.crew_service import AgentService
+from app.services.ai_provider import AIProvider
 from app.schemas.crew import AgentCreate, AgentUpdate
 from app.models.crew import Agent, AgentTool
 
@@ -40,6 +41,32 @@ async def test_create_agent(db_session, test_crew):
     assert agent.is_supervisor == agent_data.is_supervisor
     assert agent.settings == agent_data.settings
     assert agent.crew_id == test_crew.id
+
+
+@pytest.mark.asyncio
+async def test_create_agent_uses_default_models(db_session, test_crew):
+    """Test model defaults for normal and supervisor agents."""
+    normal_agent = await AgentService.create_agent(
+        db_session,
+        AgentCreate(
+            crew_id=test_crew.id,
+            name="Default Model Agent",
+            system_prompt="You are a default model test agent",
+            is_supervisor=False,
+        ),
+    )
+    supervisor_agent = await AgentService.create_agent(
+        db_session,
+        AgentCreate(
+            crew_id=test_crew.id,
+            name="Default Model Supervisor",
+            system_prompt="You are a default model test supervisor",
+            is_supervisor=True,
+        ),
+    )
+
+    assert normal_agent.model == AIProvider.DEFAULT_MODEL
+    assert supervisor_agent.model == AIProvider.SUPERVISOR_MODEL
 
 
 @pytest.mark.asyncio

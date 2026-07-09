@@ -159,7 +159,7 @@ async def test_chat_stream_endpoint(mock_services):
             yield chunk
     
     # Configure mock to return streamable object
-    mock_services["ai_provider"].get_model.return_value.astream = AsyncMock(
+    mock_services["ai_provider"].get_model.return_value.astream = MagicMock(
         return_value=mock_stream()
     )
     

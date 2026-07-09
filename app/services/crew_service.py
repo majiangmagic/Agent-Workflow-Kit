@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.crew import Crew, Agent, MCPServer, MCPTool, AgentTool, crew_mcp_association
 from app.schemas.crew import CrewCreate, CrewUpdate, AgentCreate, AgentUpdate
+from app.services.ai_provider import AIProvider
 
 
 class CrewService:
@@ -141,7 +142,14 @@ class AgentService:
                 await db.flush()
         
         # Create the new agent
-        agent = Agent(**agent_data.model_dump())
+        agent_values = agent_data.model_dump()
+        if not agent_values.get("model"):
+            agent_values["model"] = (
+                AIProvider.SUPERVISOR_MODEL
+                if agent_data.is_supervisor
+                else AIProvider.DEFAULT_MODEL
+            )
+        agent = Agent(**agent_values)
         db.add(agent)
         await db.flush()
         return agent
@@ -174,6 +182,12 @@ class AgentService:
         
         # Update attributes
         update_data = agent_data.model_dump(exclude_unset=True)
+        if (
+            update_data.get("is_supervisor") is True
+            and "model" not in update_data
+            and agent.model == AIProvider.DEFAULT_MODEL
+        ):
+            update_data["model"] = AIProvider.SUPERVISOR_MODEL
         for key, value in update_data.items():
             setattr(agent, key, value)
         

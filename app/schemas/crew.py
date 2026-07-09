@@ -29,7 +29,7 @@ class AgentBase(BaseModel):
     name: str
     description: Optional[str] = None
     system_prompt: str
-    model: str
+    model: Optional[str] = None
     temperature: float = 0.2
     is_supervisor: bool = False
     settings: Dict[str, Any] = Field(default_factory=dict)

@@ -12,7 +12,7 @@ from app.agents.supervisor.prompts import (
     DIRECT_ANSWER_PROMPT,
     PLAN_PROMPT_TEMPLATE,
 )
-from app.services.ai_provider import ai_provider
+from app.services.ai_provider import AIProvider, ai_provider
 
 
 def read_agent_config() -> Dict[str, str]:
@@ -37,7 +37,9 @@ class SupervisorAgent:
         decision_model: Optional[str] = None,
     ) -> None:
         config = read_agent_config()
-        self.decision_model = decision_model or config.get("DECISION_MODEL", "gpt-4-turbo")
+        self.decision_model = decision_model or config.get(
+            "DECISION_MODEL", AIProvider.SUPERVISOR_MODEL
+        )
 
     def _model(self, model_name: str):
         return ai_provider.get_model(model_name)

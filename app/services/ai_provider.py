@@ -13,7 +13,8 @@ from app.core.config import settings
 class AIProvider:
     """Service for managing AI model connections and interactions"""
     
-    DEFAULT_MODEL = "gpt-5.4-mini"
+    DEFAULT_MODEL = "gpt-5.4"
+    SUPERVISOR_MODEL = "gpt-5.5"
 
     def __init__(self):
         self.openrouter_models = {}
