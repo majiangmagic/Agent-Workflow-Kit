@@ -13,13 +13,16 @@ def build_workflow_agents(workflow: StateGraph) -> Dict[str, DelegatedAgentState
 
     return {
         agent_name: {
+            "agent_id": agent_name,
             "agent_name": agent_name,
             "system_prompt": f"You are {agent_name}, a specialized AI agent.",
             "model": "gpt-4-turbo",
             "temperature": 0.2,
-            "messages": [],
+            "current_task": None,
+            "completed_tasks": [],
             "status": "idle",
             "results": None,
+            "error": None,
             "tools": [],
         }
         for agent_name in workflow.nodes

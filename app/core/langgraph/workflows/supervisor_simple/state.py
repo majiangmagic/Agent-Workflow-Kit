@@ -20,6 +20,7 @@ def build_initial_state(crew_id: str, agents: List[Dict]) -> SupervisorSimpleSta
     for agent_config in agents:
         agent_key = agent_config.get("id") or agent_config["name"]
         agent_states[agent_key] = {
+            "agent_id": str(agent_key),
             "agent_name": agent_config["name"],
             "system_prompt": agent_config.get(
                 "system_prompt",
@@ -27,9 +28,11 @@ def build_initial_state(crew_id: str, agents: List[Dict]) -> SupervisorSimpleSta
             ),
             "model": agent_config.get("model", "gpt-4-turbo"),
             "temperature": agent_config.get("temperature", 0.2),
-            "messages": [],
+            "current_task": None,
+            "completed_tasks": [],
             "status": "idle",
             "results": None,
+            "error": None,
             "tools": agent_config.get("tools", []),
         }
 

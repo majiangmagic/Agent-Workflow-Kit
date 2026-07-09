@@ -45,19 +45,15 @@ def find_unknown_plan_agents(
 def agent_has_task(agent: Dict[str, Any], task: str) -> bool:
     """Return whether this task has already been assigned to the agent."""
 
-    return any(
-        isinstance(message, HumanMessage) and message.content == task
-        for message in agent["messages"]
+    return task == agent.get("current_task") or task in agent.get(
+        "completed_tasks", []
     )
 
 
 def last_assigned_task(agent: Dict[str, Any]) -> str:
     """Return the most recent task assigned to an agent."""
 
-    for message in reversed(agent["messages"]):
-        if isinstance(message, HumanMessage):
-            return str(message.content)
-    return ""
+    return str(agent.get("current_task") or "")
 
 
 class AnalyzeInputNode:
@@ -183,7 +179,7 @@ class AssignTasksNode:
                 **state,
                 "agents": updated_agents,
                 "action": SupervisorAction.COMBINE_RESULTS
-                if all_assigned and (all_complete or not any_working)
+                if not any_working or (all_assigned and all_complete)
                 else SupervisorAction.CHECK_STATUS,
             }
 
@@ -193,8 +189,8 @@ class AssignTasksNode:
         updated_agents[agent_key] = {
             **updated_agents[agent_key],
             "status": "working",
-            "messages": updated_agents[agent_key]["messages"]
-            + [HumanMessage(content=task)],
+            "current_task": task,
+            "error": None,
         }
 
         return {
@@ -231,8 +227,7 @@ class CheckStatusNode:
                     **updated_agents[agent_key],
                     "status": "error",
                     "results": {"error": error},
-                    "messages": updated_agents[agent_key]["messages"]
-                    + [AIMessage(content=error)],
+                    "error": error,
                 }
                 continue
 
@@ -252,7 +247,7 @@ class CheckStatusNode:
                                 ),
                             )
                         ),
-                        *agent["messages"],
+                        HumanMessage(content=task),
                     ]
                 )
                 response_content = str(response.content)
@@ -263,11 +258,13 @@ class CheckStatusNode:
                 updated_agents[agent_key] = {
                     **updated_agents[agent_key],
                     "status": "complete",
+                    "current_task": None,
+                    "completed_tasks": agent.get("completed_tasks", []) + [task],
                     "results": {
                         "response": previous_response
                         + f"Task: {task}\nResult: {response_content}"
                     },
-                    "messages": updated_agents[agent_key]["messages"] + [response],
+                    "error": None,
                 }
             except Exception as exc:
                 error = f"{agent['agent_name']} failed to execute task: {str(exc)}"
@@ -275,8 +272,7 @@ class CheckStatusNode:
                     **updated_agents[agent_key],
                     "status": "error",
                     "results": {"error": error},
-                    "messages": updated_agents[agent_key]["messages"]
-                    + [AIMessage(content=error)],
+                    "error": error,
                 }
 
         return {
