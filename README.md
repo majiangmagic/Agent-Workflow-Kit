@@ -1,8 +1,8 @@
 # LangGraph 多 Agent 工作流模板
 
-这是一个正在二次开发中的 LangGraph 多 Agent 后端项目。项目目标是构建一个“主脑 Supervisor + 多个真实子 Agent”的工作流系统，并通过 FastAPI 对外提供会话接口。
+这是一个正在二次开发中的 LangGraph 多 Agent 后端项目。项目目标是构建一个可扩展的 Agent 工作流后端：可以注册和运行不同类型的 workflow，可以通过 FastAPI 对外提供会话接口，也可以逐步接入多种真实 Agent 执行形态。
 
-当前版本不是完整产品，也不是最终架构定型版。它更像一个可继续演进的后端骨架：已经把 `chat` 接到了 Supervisor 工作流，并开始补真实子 Agent 执行链；但 AgentExecutor、MCP 工具闭环、数据库迁移、完整 API 路由挂载等能力还需要继续完善。
+当前版本不是完整产品，也不是最终架构定型版。它更像一个可继续演进的后端骨架：目前已经把 `chat` 接到了 `supervisor_simple` 工作流，并开始补“主脑 Supervisor + 多个真实子 Agent”的执行链；但这个 Supervisor 工作流只是当前已有的一种 workflow，不是项目的唯一目标。AgentExecutor、MCP 工具闭环、数据库迁移、完整 API 路由挂载等能力还需要继续完善。
 
 ## 当前状态
 
@@ -29,7 +29,7 @@ app.include_router(conversation.router, prefix="/api")
 
 ## 工作流架构
 
-当前主工作流是 `supervisor_simple`：
+当前已经接入 API 的主工作流是 `supervisor_simple`：
 
 ```text
 POST /api/conversations/{conversation_id}/chat
@@ -174,8 +174,9 @@ uvicorn app.main:app --reload
 这个项目当前适合：
 
 - 继续开发 LangGraph 多 Agent 后端。
-- 研究 Supervisor 工作流如何接入 FastAPI。
-- 作为主脑调度多个真实 Agent 的早期骨架。
+- 扩展多种 workflow 的注册、选择和运行能力。
+- 研究当前 Supervisor 工作流如何接入 FastAPI。
+- 作为主脑调度多个真实 Agent 的早期实现之一。
 
 暂时不适合：
 
