@@ -15,7 +15,6 @@ from app.models.activity_log import ActivityType
 from app.services.conversation_service import ConversationService, ActivityLogService
 from app.services.crew_service import CrewService, AgentService
 from app.services.workflow_service import WorkflowService
-from app.core.langgraph.workflows.supervisor_simple import build_initial_state
 from app.schemas.crew import CrewResponse, AgentResponse
 from app.schemas.conversation import (
     ConversationCreate, 
@@ -105,15 +104,14 @@ async def build_workflow_for_conversation(
         for agent in agents
         if not agent.is_supervisor
     ]
-    workflow = WorkflowService.create_workflow(
+    workflow, initial_state = WorkflowService.create_workflow_run(
         crew=crew,
         agents=delegated_agents,
+        conversation_id=str(conversation.id),
+        messages=history_messages[-10:],
+        user_input=user_message.content,
         system_prompt=supervisor.system_prompt,
     )
-    initial_state = build_initial_state(str(crew.id), delegated_agents)
-    initial_state["conversation_id"] = str(conversation.id)
-    initial_state["supervisor"]["messages"] = history_messages[-10:]
-    initial_state["supervisor"]["user_input"] = user_message.content
 
     return workflow, initial_state, supervisor
 

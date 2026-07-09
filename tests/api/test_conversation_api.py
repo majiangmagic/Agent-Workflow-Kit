@@ -28,8 +28,7 @@ def mock_services():
          patch("app.api.routes.conversation.CrewService") as mock_crew_service, \
          patch("app.api.routes.conversation.AgentService") as mock_agent_service, \
          patch("app.api.routes.conversation.ActivityLogService") as mock_activity_log_service, \
-         patch("app.api.routes.conversation.WorkflowService") as mock_workflow_service, \
-         patch("app.api.routes.conversation.build_initial_state") as mock_build_initial_state:
+         patch("app.api.routes.conversation.WorkflowService") as mock_workflow_service:
 
         # Setup mock conversation service
         mock_conversation = MagicMock()
@@ -75,8 +74,7 @@ def mock_services():
                 }
             }
         )
-        mock_workflow_service.create_workflow.return_value = mock_workflow
-        mock_build_initial_state.return_value = {
+        mock_initial_state = {
             "supervisor": {
                 "messages": [],
                 "user_input": None,
@@ -87,6 +85,10 @@ def mock_services():
             "crew_id": str(mock_crew_id),
             "conversation_id": "",
         }
+        mock_workflow_service.create_workflow_run.return_value = (
+            mock_workflow,
+            mock_initial_state,
+        )
 
         # Setup activity log service
         mock_activity_log_service.log_activity = AsyncMock()
@@ -124,7 +126,7 @@ async def test_chat_endpoint(mock_services):
     # Note: ChatResponse schema doesn't include created_at field
     
     # Verify the workflow was called instead of the direct AI provider path
-    mock_services["workflow_service"].create_workflow.assert_called_once()
+    mock_services["workflow_service"].create_workflow_run.assert_called_once()
     mock_services["workflow"].ainvoke.assert_called_once()
     
     # Verify conversation service methods were called

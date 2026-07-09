@@ -8,7 +8,10 @@ import app.agents.supervisor.graph  # noqa: F401
 from app.agents.registry import agent_registry
 from app.core.langgraph.workflows.adapters.agent import create_agent_node
 from app.core.langgraph.workflows.adapters.supervisor import create_supervisor_extension
-from app.core.langgraph.workflows.supervisor_simple.state import SupervisorSimpleState
+from app.core.langgraph.workflows.supervisor_simple.state import (
+    SupervisorSimpleState,
+    build_initial_state,
+)
 from app.core.langgraph.workflows.registry import workflow_registry
 
 
@@ -30,4 +33,8 @@ def create_supervisor_simple_graph(
     return workflow.compile()
 
 
-workflow_registry.register("supervisor_simple", create_supervisor_simple_graph)
+workflow_registry.register(
+    "supervisor_simple",
+    create_supervisor_simple_graph,
+    state_builder=build_initial_state,
+)

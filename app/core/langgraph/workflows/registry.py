@@ -1,13 +1,23 @@
 """Registry for available LangGraph workflows."""
 
 import logging
-from typing import Callable, Dict, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional
 
 from app.core.langgraph.common.errors import WorkflowNotFoundError
 
 logger = logging.getLogger(__name__)
 
 WorkflowFactory = Callable[..., object]
+StateBuilder = Callable[..., Dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class WorkflowSpec:
+    """Factory functions registered for one workflow type."""
+
+    factory: WorkflowFactory
+    state_builder: Optional[StateBuilder] = None
 
 
 class WorkflowRegistry:
@@ -15,16 +25,24 @@ class WorkflowRegistry:
 
     def __init__(self, default_name: str = "supervisor_simple") -> None:
         self.default_name = default_name
-        self._factories: Dict[str, WorkflowFactory] = {}
+        self._specs: Dict[str, WorkflowSpec] = {}
 
-    def register(self, name: str, factory: WorkflowFactory) -> None:
-        self._factories[name] = factory
+    def register(
+        self,
+        name: str,
+        factory: WorkflowFactory,
+        state_builder: Optional[StateBuilder] = None,
+    ) -> None:
+        self._specs[name] = WorkflowSpec(
+            factory=factory,
+            state_builder=state_builder,
+        )
 
-    def get(self, name: Optional[str] = None, *, fallback: bool = True) -> WorkflowFactory:
+    def get_spec(self, name: Optional[str] = None, *, fallback: bool = True) -> WorkflowSpec:
         workflow_name = name or self.default_name
-        factory = self._factories.get(workflow_name)
-        if factory is not None:
-            return factory
+        spec = self._specs.get(workflow_name)
+        if spec is not None:
+            return spec
 
         if fallback:
             logger.warning(
@@ -32,14 +50,26 @@ class WorkflowRegistry:
                 workflow_name,
                 self.default_name,
             )
-            default_factory = self._factories.get(self.default_name)
-            if default_factory is not None:
-                return default_factory
+            default_spec = self._specs.get(self.default_name)
+            if default_spec is not None:
+                return default_spec
 
         raise WorkflowNotFoundError(f"Workflow '{workflow_name}' is not registered")
 
+    def get(self, name: Optional[str] = None, *, fallback: bool = True) -> WorkflowFactory:
+        """Return the graph factory for a registered workflow."""
+
+        return self.get_spec(name, fallback=fallback).factory
+
+    def get_state_builder(
+        self, name: Optional[str] = None, *, fallback: bool = True
+    ) -> Optional[StateBuilder]:
+        """Return the initial-state builder for a registered workflow."""
+
+        return self.get_spec(name, fallback=fallback).state_builder
+
     def names(self) -> list[str]:
-        return sorted(self._factories)
+        return sorted(self._specs)
 
 
 workflow_registry = WorkflowRegistry()

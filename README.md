@@ -60,6 +60,8 @@ analyze_input
 - `check_status` 会执行被分配任务的 Agent，并把结果写入 `results`。
 - `combine_results` 汇总子 Agent 结果并生成最终回复。
 
+Workflow 的 initial state 现在由 workflow 自己的 `state_builder` 构造。Conversation API 只负责收集通用上下文，例如 `conversation_id`、最近消息、用户输入和 agents 列表；具体如何把短期记忆放进每个 agent 的 `messages`，由对应 workflow 决定。
+
 ## Delegated Agent State
 
 Supervisor 侧只保存调度需要的信息，不保存 Agent 定义快照。
@@ -90,7 +92,7 @@ Supervisor 侧只保存调度需要的信息，不保存 Agent 定义快照。
 
 当前还有几个关键限制：
 
-1. `chat/stream` 目前仍是直接调用 LLM streaming，没有走完整 workflow event stream。
+1. `chat/stream` 目前已经走 workflow，但仍是 workflow 完成后一次性输出结果，还不是节点事件级或 token 级 workflow event stream。
 2. 子 Agent 执行逻辑还在 Supervisor 节点里，后续应该抽成独立 `AgentExecutor`。
 3. 当前子 Agent 执行仍是简化版 LLM 调用，尚未支持多节点 Agent Graph。
 4. MCP 工具模型和服务代码存在，但还没有形成完整的 Agent 工具调用闭环。
@@ -166,7 +168,7 @@ uvicorn app.main:app --reload
 4. 让 `AgentExecutor` 支持通过 `agent_id` 加载真实 Agent 配置。
 5. 支持子 Agent 自己是多节点 LangGraph。
 6. 接入 MCP tools，并把工具调用过程纳入 Agent 执行链。
-7. 把 `chat/stream` 改造成 workflow 事件流。
+7. 把 `chat/stream` 从一次性 SSE 输出升级成真正的 workflow 事件流。
 8. 补集成测试，覆盖从创建 crew/agent/conversation 到 chat 的完整路径。
 
 ## 项目定位
