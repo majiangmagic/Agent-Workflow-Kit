@@ -22,7 +22,7 @@ from app.core.langgraph.events import (
 from app.services.conversation_service import ConversationService, ActivityLogService
 from app.services.crew_service import CrewService, AgentService
 from app.services.workflow_service import WorkflowService
-from app.core.langgraph.workflows.supervisor_simple.state import normalize_node_name
+from app.core.langgraph.workflows.declarative import normalize_node_name
 from app.schemas.crew import CrewResponse, AgentResponse
 from app.schemas.conversation import (
     ConversationCreate, 
@@ -59,12 +59,20 @@ def agent_to_workflow_config(agent) -> Dict[str, Any]:
 def extract_workflow_response(final_state: Dict[str, Any]) -> str:
     """Get the last supervisor AI message from a completed workflow run."""
 
-    supervisor_state = final_state.get("supervisor", {})
+    supervisor_state = get_supervisor_state(final_state)
     for message in reversed(supervisor_state.get("messages", [])):
         if isinstance(message, AIMessage):
             return str(message.content)
 
     return "Workflow completed without an assistant response."
+
+
+def get_supervisor_state(final_state: Dict[str, Any]) -> Dict[str, Any]:
+    """Read supervisor state from the current or legacy workflow shape."""
+
+    return final_state.get("nodes", {}).get("supervisor") or final_state.get(
+        "supervisor", {}
+    )
 
 
 def stream_data(data: Dict[str, Any]) -> str:
@@ -487,7 +495,7 @@ async def chat_stream(
                         "object": "workflow.event",
                         "type": "workflow.completed",
                         "summary": summarize_supervisor_state(
-                            final.get("supervisor", {})
+                            get_supervisor_state(final)
                         ),
                     }
                 )

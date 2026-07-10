@@ -3,9 +3,9 @@
 from langchain_core.messages import AIMessage
 
 from app.agents.supervisor.official_runtime import OfficialSupervisorRuntime
+from app.core.langgraph.workflows.declarative import merge_node_states
 from app.core.langgraph.workflows.supervisor_simple.state import (
     build_initial_state,
-    merge_supervisor_state,
 )
 
 
@@ -34,11 +34,13 @@ def test_delegated_agent_prompt_is_preserved_in_workflow_state():
         user_input="Summarize this.",
     )
 
-    writer_state = state["supervisor"]["agents"]["writer-1"]
+    supervisor_state = state["nodes"]["supervisor"]
+    writer_state = state["agents"]["writer"]
 
-    assert "supervisor-1" not in state["supervisor"]["agents"]
-    assert state["supervisor"]["agent_id"] == "supervisor-1"
-    assert state["supervisor"]["system_prompt"] == "You coordinate this crew."
+    assert set(state["nodes"]) == {"supervisor"}
+    assert set(state["agents"]) == {"supervisor", "writer"}
+    assert supervisor_state["agent_id"] == "supervisor-1"
+    assert supervisor_state["system_prompt"] == "You coordinate this crew."
     assert writer_state["agent_name"] == "Writer"
     assert writer_state["description"] == "Creates concise user-facing summaries."
     assert writer_state["system_prompt"] == "You write concise responses."
@@ -58,6 +60,11 @@ def test_official_supervisor_prompt_includes_worker_instructions():
         crew_id="crew-1",
         agents=[
             {
+                "id": "supervisor-1",
+                "name": "supervisor",
+                "system_prompt": "You coordinate this crew.",
+            },
+            {
                 "id": "writer-1",
                 "name": "Writer",
                 "description": "Creates concise user-facing summaries.",
@@ -69,7 +76,15 @@ def test_official_supervisor_prompt_includes_worker_instructions():
         ],
     )
 
-    prompt = runtime._build_prompt({"writer": "writer-1"}, state["supervisor"])
+    prompt = runtime._build_prompt(
+        {"writer": "writer"},
+        {
+            **state["nodes"]["supervisor"],
+            "agents": {
+                "writer": state["agents"]["writer"],
+            },
+        },
+    )
 
     assert "You coordinate this crew." in prompt
     assert "description=Creates concise user-facing summaries." in prompt
@@ -81,21 +96,25 @@ def test_checkpointed_supervisor_messages_survive_new_turn_input():
     """A fresh turn should update user_input without clearing checkpoint memory."""
 
     current = {
-        "messages": [AIMessage(content="Earlier answer")],
-        "user_input": None,
-        "plan": None,
-        "action": None,
-        "agents": {},
+        "supervisor": {
+            "messages": [AIMessage(content="Earlier answer")],
+            "user_input": None,
+            "plan": None,
+            "action": None,
+            "agents": {},
+        }
     }
     update = {
-        "messages": [],
-        "user_input": "Continue the conversation",
-        "plan": None,
-        "action": None,
-        "agents": {},
+        "supervisor": {
+            "messages": [],
+            "user_input": "Continue the conversation",
+            "plan": None,
+            "action": None,
+            "agents": {},
+        }
     }
 
-    merged = merge_supervisor_state(current, update)
+    merged = merge_node_states(current, update)
 
-    assert merged["messages"] == current["messages"]
-    assert merged["user_input"] == "Continue the conversation"
+    assert merged["supervisor"]["messages"] == current["supervisor"]["messages"]
+    assert merged["supervisor"]["user_input"] == "Continue the conversation"

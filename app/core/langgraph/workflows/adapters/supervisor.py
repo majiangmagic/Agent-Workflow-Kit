@@ -2,43 +2,62 @@
 
 from typing import Any, Dict
 
-from langgraph.graph import StateGraph
-
 from app.agents.supervisor.state import DelegatedAgentState, SupervisorState
 from app.core.langgraph.workflows.adapters.agent import AgentNodeExtension
 
 
-def build_workflow_agents(workflow: StateGraph) -> Dict[str, DelegatedAgentState]:
+def build_workflow_agents(
+    node_states: Dict[str, Dict[str, Any]],
+    supervisor_node: str,
+    agent_catalog: Dict[str, Dict[str, Any]] | None = None,
+) -> Dict[str, DelegatedAgentState]:
     """Build supervisor-readable agent state from workflow nodes."""
 
-    return {
-        agent_name: {
-            "agent_id": agent_name,
-            "agent_name": agent_name,
-            "description": None,
-            "system_prompt": None,
-            "model": None,
-            "temperature": 0.2,
-            "messages": [],
-            "status": "idle",
-            "results": None,
-            "error": None,
-            "tools": [],
+    candidate_states = {
+        node_name: node_state
+        for node_name, node_state in node_states.items()
+        if node_name != supervisor_node
+    }
+    if not candidate_states and agent_catalog:
+        candidate_states = {
+            agent_name: agent_state
+            for agent_name, agent_state in agent_catalog.items()
+            if agent_name != supervisor_node
         }
-        for agent_name in workflow.nodes
+
+    return {
+        node_name: {
+            "agent_id": node_state.get("agent_id", node_name),
+            "agent_name": node_state.get("agent_name", node_name),
+            "description": node_state.get("description"),
+            "system_prompt": node_state.get("system_prompt"),
+            "model": node_state.get("model"),
+            "temperature": node_state.get("temperature", 0.2),
+            "messages": [],
+            "status": node_state.get("status", "idle"),
+            "results": node_state.get("results"),
+            "error": node_state.get("error"),
+            "tools": node_state.get("tools", []),
+        }
+        for node_name, node_state in candidate_states.items()
     }
 
 
-def create_supervisor_extension(workflow: StateGraph) -> AgentNodeExtension:
+def create_supervisor_extension(node_name: str) -> AgentNodeExtension:
     """Create the optional workflow extension for the supervisor agent."""
 
     def prepare_supervisor_state(state: Dict[str, Any]) -> SupervisorState:
         """Prepare supervisor state before running the agent graph."""
-        agents = state["supervisor"].get("agents")
-        if agents is None:
-            agents = build_workflow_agents(workflow)
+        supervisor_state = state["nodes"][node_name]
+        agents = supervisor_state.get("agents")
+        if not agents:
+            agents = build_workflow_agents(
+                state["nodes"],
+                node_name,
+                state.get("agents"),
+            )
         return {
-            **state["supervisor"],
+            **supervisor_state,
             "agents": agents,
         }
 
@@ -47,7 +66,9 @@ def create_supervisor_extension(workflow: StateGraph) -> AgentNodeExtension:
     ) -> Dict[str, Any]:
         """Write supervisor changes back to workflow state."""
         return {
-            "supervisor": updated_supervisor_state,
+            "nodes": {
+                node_name: updated_supervisor_state,
+            },
         }
 
     return AgentNodeExtension(

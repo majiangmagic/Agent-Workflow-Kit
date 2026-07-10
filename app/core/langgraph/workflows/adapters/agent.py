@@ -7,6 +7,7 @@ from langchain_core.runnables import RunnableConfig
 
 AgentStatePreparer = Callable[[Dict[str, Any]], Dict[str, Any]]
 WorkflowUpdateBuilder = Callable[[Dict[str, Any]], Dict[str, Any]]
+AgentNodeExtensionFactory = Callable[[str], "AgentNodeExtension"]
 
 
 @dataclass(frozen=True)
@@ -33,12 +34,12 @@ def create_agent_node(
         agent_state = (
             extension.prepare_agent_state(state)
             if extension is not None
-            else state[agent_name]
+            else state["nodes"][agent_name]
         )
         updated_agent_state = agent_graph.invoke(agent_state, config=config)
 
         if extension is not None:
             return extension.build_workflow_update(updated_agent_state)
-        return {agent_name: updated_agent_state}
+        return {"nodes": {agent_name: updated_agent_state}}
 
     return run_agent
