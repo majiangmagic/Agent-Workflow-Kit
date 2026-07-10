@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "kind": "workflow",
+  "name": "baseball_analysis_workflow",
+  "entrypoint": "supervisor",
+  "nodes": {
+    "supervisor": {
+      "agent": "official_supervisor",
+      "extension": "supervisor"
+    },
+    "baseball_analyst": {
+      "agent": "baseball_analysis_agent"
+    }
+  },
+  "edges": [
+    {
+      "from": "supervisor",
+      "to": "baseball_analyst"
+    },
+    {
+      "from": "baseball_analyst",
+      "to": "END"
+    }
+  ]
+}

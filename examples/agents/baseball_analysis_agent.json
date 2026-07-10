@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "kind": "agent",
+  "name": "baseball_analysis_agent",
+  "display_name": "Baseball Analysis Agent",
+  "config": {
+    "prompt": "You are a baseball data analysis agent. Turn user questions into a small analysis plan, draft Python-style analysis code, execute safe built-in examples, and summarize the result clearly.",
+    "model": "openai/gpt-4.1",
+    "temperature": 0.2
+  },
+  "state": {
+    "plan": {
+      "type": "string",
+      "optional": true
+    },
+    "task": {
+      "type": "string",
+      "optional": true
+    },
+    "function_detail": {
+      "type": "string",
+      "optional": true
+    },
+    "code": {
+      "type": "string",
+      "optional": true
+    },
+    "execution_result": {
+      "type": "dict",
+      "optional": true
+    },
+    "answer": {
+      "type": "string",
+      "optional": true
+    }
+  },
+  "entrypoint": "plan",
+  "nodes": {
+    "plan": {
+      "handler": "plan_node"
+    },
+    "retrieve": {
+      "handler": "retrieve_node"
+    },
+    "generate_code": {
+      "handler": "generate_code_node"
+    },
+    "execute_code": {
+      "handler": "execute_code_node"
+    },
+    "summarize": {
+      "handler": "summarize_node"
+    }
+  },
+  "edges": [
+    {
+      "from": "plan",
+      "to": "retrieve"
+    },
+    {
+      "from": "retrieve",
+      "to": "generate_code"
+    },
+    {
+      "from": "generate_code",
+      "to": "execute_code"
+    },
+    {
+      "from": "execute_code",
+      "to": "summarize"
+    },
+    {
+      "from": "summarize",
+      "to": "END"
+    }
+  ]
+}

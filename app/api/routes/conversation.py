@@ -57,7 +57,14 @@ def agent_to_workflow_config(agent) -> Dict[str, Any]:
 
 
 def extract_workflow_response(final_state: Dict[str, Any]) -> str:
-    """Get the last supervisor AI message from a completed workflow run."""
+    """Get the last assistant-style response from a completed workflow run."""
+
+    for node_state in reversed(list((final_state.get("nodes") or {}).values())):
+        if node_state.get("answer"):
+            return str(node_state["answer"])
+        for message in reversed(node_state.get("messages", [])):
+            if isinstance(message, AIMessage):
+                return str(message.content)
 
     supervisor_state = get_supervisor_state(final_state)
     for message in reversed(supervisor_state.get("messages", [])):
