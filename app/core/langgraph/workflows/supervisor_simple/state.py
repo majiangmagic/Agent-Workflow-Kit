@@ -1,15 +1,38 @@
 """Shared state for the simple supervisor workflow."""
 
-from typing import Dict, List, Optional, TypedDict
+from typing import Annotated, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import BaseMessage
 from app.agents.supervisor.state import SupervisorState
 
 
+def merge_supervisor_state(
+    current: Optional[SupervisorState],
+    update: Optional[SupervisorState],
+) -> SupervisorState:
+    """Merge per-turn supervisor input into checkpointed workflow state."""
+
+    if not current:
+        return update or {
+            "messages": [],
+            "user_input": None,
+            "plan": None,
+            "action": None,
+            "agents": {},
+        }
+    if not update:
+        return current
+
+    merged = {**current, **update}
+    if update.get("messages") == [] and current.get("messages"):
+        merged["messages"] = current["messages"]
+    return merged
+
+
 class SupervisorSimpleState(TypedDict):
     """Global state passed through the simple supervisor workflow."""
 
-    supervisor: SupervisorState
+    supervisor: Annotated[SupervisorState, merge_supervisor_state]
     crew_id: str
     conversation_id: str
 

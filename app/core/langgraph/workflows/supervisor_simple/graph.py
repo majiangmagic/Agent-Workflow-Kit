@@ -6,6 +6,7 @@ from langgraph.graph import END, StateGraph
 
 import app.agents.supervisor.graph  # noqa: F401
 from app.agents.registry import agent_registry
+from app.core.langgraph.checkpoint import get_checkpointer
 from app.core.langgraph.workflows.adapters.agent import create_agent_node
 from app.core.langgraph.workflows.adapters.supervisor import create_supervisor_extension
 from app.core.langgraph.workflows.supervisor_simple.state import (
@@ -36,7 +37,7 @@ def create_supervisor_simple_graph(
     workflow.add_edge("supervisor", END)
     workflow.set_entry_point("supervisor")
 
-    return workflow.compile()
+    return workflow.compile(checkpointer=get_checkpointer())
 
 
 workflow_registry.register(

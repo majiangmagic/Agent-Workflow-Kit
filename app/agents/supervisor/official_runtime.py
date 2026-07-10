@@ -10,7 +10,6 @@ from langgraph_supervisor import create_supervisor
 
 from app.agents.supervisor.state import DelegatedAgentState, SupervisorState
 from app.core.langgraph.events import emit_event
-from app.core.langgraph.checkpoint import get_checkpointer
 from app.services.ai_provider import ai_provider
 
 
@@ -134,7 +133,6 @@ class OfficialSupervisorRuntime:
             }
         )
 
-        checkpointer = get_checkpointer()
         official_agents, runtime_to_agent_key = self._build_agent_graphs(state)
         model = ai_provider.get_model(
             model_name=self.model_name,
@@ -147,7 +145,7 @@ class OfficialSupervisorRuntime:
             output_mode="full_history",
             handoff_tool_prefix="delegate_to",
             include_agent_name="inline",
-        ).compile(checkpointer=checkpointer)
+        ).compile()
 
         result = workflow.invoke(
             {"messages": build_official_messages(state)},

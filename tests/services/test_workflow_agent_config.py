@@ -1,7 +1,12 @@
 """Tests for preserving agent runtime configuration in workflows."""
 
+from langchain_core.messages import AIMessage
+
 from app.agents.supervisor.official_runtime import OfficialSupervisorRuntime
-from app.core.langgraph.workflows.supervisor_simple.state import build_initial_state
+from app.core.langgraph.workflows.supervisor_simple.state import (
+    build_initial_state,
+    merge_supervisor_state,
+)
 
 
 def test_delegated_agent_prompt_is_preserved_in_workflow_state():
@@ -62,3 +67,27 @@ def test_official_supervisor_prompt_includes_worker_instructions():
     assert "description=Creates concise user-facing summaries." in prompt
     assert "instructions=You write concise responses." in prompt
     assert "model=worker-model" in prompt
+
+
+def test_checkpointed_supervisor_messages_survive_new_turn_input():
+    """A fresh turn should update user_input without clearing checkpoint memory."""
+
+    current = {
+        "messages": [AIMessage(content="Earlier answer")],
+        "user_input": None,
+        "plan": None,
+        "action": None,
+        "agents": {},
+    }
+    update = {
+        "messages": [],
+        "user_input": "Continue the conversation",
+        "plan": None,
+        "action": None,
+        "agents": {},
+    }
+
+    merged = merge_supervisor_state(current, update)
+
+    assert merged["messages"] == current["messages"]
+    assert merged["user_input"] == "Continue the conversation"
