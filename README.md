@@ -1,23 +1,23 @@
-# LangGraph Multi-Agent Workflow Template
+# LangGraph 多 Agent 工作流后端模板
 
-一个轻量、代码优先的 LangGraph 多 Agent 工作流后端模板。
+这是一个轻量、代码优先的 LangGraph 多 Agent 工作流后端模板。
 
-这个项目不是 Dify / Flowise / Langflow 那种大平台，也不是生产级成品。它的定位更直接：用 FastAPI、PostgreSQL 和 LangGraph 搭一个能看懂、能改、能继续扩展的多 Agent workflow backend。
+项目目标不是做一个大而全的智能体平台，而是提供一个能看懂、能修改、能继续扩展的后端骨架：用 FastAPI 提供 API，用 PostgreSQL 保存会话和配置，用 LangGraph 执行工作流，用事件流观察运行过程。
 
-当前已经打通了 API、数据库、Supervisor workflow、SSE 进度事件和端到端测试。真实子 Agent 执行器、MCP 工具闭环和 Alembic 迁移还在后续路线里。
+当前已经打通了 API、数据库、Supervisor 工作流、SSE 进度事件和端到端测试。真实子 Agent 执行器、MCP 工具闭环和 Alembic 迁移还在后续路线里。
 
-## What It Does
+## 当前能力
 
-- 提供 FastAPI 后端接口
-- 管理 crew、agent、conversation、message
-- 支持统一聊天入口 `POST /api/chat`
-- 将 chat 请求接入 `supervisor_simple` LangGraph workflow
-- 支持 workflow 运行进度事件流
-- 使用 PostgreSQL 作为主数据库
-- 提供 SQLAlchemy 模型和 service 层
-- 包含端到端测试：创建 crew/agent -> chat -> message 入库
+- FastAPI 后端接口
+- Crew / Agent / Conversation / Message 管理
+- 统一聊天入口 `POST /api/chat`
+- `chat` 请求接入 `supervisor_simple` 工作流
+- 工作流运行进度事件流
+- PostgreSQL 主数据库
+- SQLAlchemy 模型和 service 层
+- 端到端测试：创建 crew/agent -> chat -> message 入库
 
-## Current Architecture
+## 当前架构
 
 ```text
 HTTP API
@@ -28,7 +28,7 @@ HTTP API
   -> messages / activity logs
 ```
 
-`supervisor_simple` 当前是默认 workflow。它内部运行一个 supervisor agent graph：
+`supervisor_simple` 是当前默认工作流。它内部运行一个 supervisor agent graph：
 
 ```text
 analyze_input
@@ -41,9 +41,9 @@ analyze_input
 
 简单问题会由 Supervisor 直接回答。复杂问题会进入计划和任务分配流程。
 
-目前还没有真实 `AgentExecutor`，所以当任务分配给子 Agent 后，`check_status` 会明确返回错误，而不是用默认 LLM 假装子 Agent 已经执行。
+目前还没有真实 `AgentExecutor`。所以当任务分配给子 Agent 后，`check_status` 会明确返回错误，而不是用默认 LLM 假装子 Agent 已经执行。
 
-## API
+## API 接口
 
 已挂载的主要接口：
 
@@ -77,15 +77,15 @@ POST   /api/chat
 
 `POST /api/chat` 是推荐入口：
 
-- 如果传 `conversation_id`，继续已有会话。
-- 如果不传 `conversation_id`，需要传 `user_id` 和 `crew_id`，后端会先创建会话再发送消息。
+- 传 `conversation_id`：继续已有会话。
+- 不传 `conversation_id`：需要传 `user_id` 和 `crew_id`，后端会先创建会话再发送消息。
 - 响应会返回 `conversation_id`，方便前端继续对话。
 
-## Streaming Events
+## 流式事件
 
-`POST /api/conversations/{conversation_id}/chat/stream` 会返回 SSE。
+`POST /api/conversations/{conversation_id}/chat/stream` 返回 SSE。
 
-它现在不是 token-by-token streaming，而是 workflow progress event stream。也就是说，前端可以看到 workflow 跑到了哪一步：
+它现在不是 token-by-token 流式输出，而是工作流进度事件流。前端可以看到工作流跑到了哪一步：
 
 ```text
 workflow.started
@@ -98,47 +98,47 @@ chat.completion.chunk
 [DONE]
 ```
 
-事件流通过独立的 runtime event channel 实现，不污染 LangGraph state。
+事件流通过独立的运行时事件通道实现，不污染 LangGraph state：
 
 ```text
 node -> emit_event(...) -> WorkflowEventSink -> /chat/stream -> SSE
 ```
 
-## Project Structure
+## 目录结构
 
 ```text
 app/
   agents/
-    supervisor/              # Supervisor agent graph, state, nodes, prompts
+    supervisor/              # Supervisor agent graph、state、nodes、prompts
   api/
     routes/
-      conversation.py        # Conversation and chat APIs
-      crew.py                # Crew and Agent APIs
-      storage.py             # Storage APIs, not yet mounted
+      conversation.py        # Conversation 和 chat API
+      crew.py                # Crew 和 Agent API
+      storage.py             # Storage API，暂未挂载
   core/
     langgraph/
-      events.py              # Runtime workflow event sink
+      events.py              # 运行时 workflow event sink
       workflows/
         registry.py          # Workflow registry
-        supervisor_simple/   # Current default workflow
+        supervisor_simple/   # 当前默认工作流
         adapters/            # Agent graph / workflow adapter
-  db/                        # SQLAlchemy base and session
-  models/                    # Crew, Agent, Conversation, ActivityLog
+  db/                        # SQLAlchemy base 和 session
+  models/                    # Crew、Agent、Conversation、ActivityLog
   schemas/                   # Pydantic schemas
-  services/                  # Crew, Conversation, Workflow, AI Provider
+  services/                  # Crew、Conversation、Workflow、AI Provider
 
 database/
-  schema.sql                 # PostgreSQL schema archive
+  schema.sql                 # PostgreSQL schema 归档
 
 tests/
   api/
-    test_chat_e2e.py         # End-to-end API workflow test
+    test_chat_e2e.py         # 端到端 API 工作流测试
   services/
 ```
 
-## Quick Start
+## 快速开始
 
-### 1. Create environment
+### 1. 创建环境
 
 ```bash
 python -m venv .venv
@@ -146,13 +146,13 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### 2. Configure env
+### 2. 配置环境变量
 
 ```bash
 copy .env.example .env
 ```
 
-Required values:
+至少需要配置：
 
 ```env
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/multiagent_db"
@@ -161,85 +161,87 @@ OPENROUTER_API_KEY="..."
 JWT_SECRET_KEY="change-me"
 ```
 
-### 3. Initialize database
+### 3. 初始化数据库
 
-There is no Alembic migration flow yet. For local development, create tables from SQLAlchemy metadata or import `database/schema.sql`.
+当前还没有正式 Alembic 迁移流程。
 
-### 4. Run server
+本地开发可以先用 SQLAlchemy metadata 创建表，或者导入 `database/schema.sql`。
+
+### 4. 启动服务
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-Docs:
+接口文档：
 
 ```text
 http://localhost:8000/api/docs
 http://localhost:8000/api/redoc
 ```
 
-## Minimal Flow
+## 最小使用流程
 
-1. Create a crew.
-2. Create a supervisor agent for that crew.
-3. Create one or more worker agents.
-4. Call `POST /api/chat`.
-5. Inspect persisted messages with `GET /api/conversations/{conversation_id}/messages`.
+1. 创建一个 crew。
+2. 给 crew 创建一个 supervisor agent。
+3. 给 crew 创建一个或多个 worker agent。
+4. 调用 `POST /api/chat`。
+5. 用 `GET /api/conversations/{conversation_id}/messages` 查看入库消息。
 
-The E2E test covers this path without calling a real model.
+端到端测试覆盖了这条路径，并且不会调用真实模型。
 
-## Tests
+## 测试
 
 ```bash
 pytest
 ```
 
-Current test coverage includes:
+当前测试覆盖：
 
 - crew service
 - agent service
 - conversation/chat API
-- workflow-backed chat path
-- SSE workflow progress events
-- end-to-end crew -> agents -> chat -> messages persistence
+- 接入 workflow 的 chat 路径
+- SSE 工作流进度事件
+- 端到端 crew -> agents -> chat -> messages 入库
 
-## Current Limits
+## 当前限制
 
-- No real `AgentExecutor` yet.
-- Worker agents do not actually execute delegated tasks yet.
-- MCP tool execution is not wired into agent execution yet.
-- `chat/stream` emits workflow progress events, not token-by-token model output.
-- Alembic migrations are not set up as the main schema workflow yet.
-- Auth/security is still starter-level.
-- Storage routes exist but are not mounted in `app/main.py`.
+- 还没有真实 `AgentExecutor`。
+- Worker agents 还不能真正执行被委派任务。
+- MCP tool execution 还没有接入 agent 执行链。
+- `chat/stream` 输出的是工作流进度事件，不是模型 token-by-token 输出。
+- Alembic 迁移还没有作为主 schema 流程建立。
+- 鉴权和安全能力还只是 starter 级别。
+- Storage routes 存在，但还没有挂载到 `app/main.py`。
 
-## Roadmap
+## 开发路线
 
-- Add a real `AgentExecutor`.
-- Load worker agent config by `agent_id`.
-- Support simple LLM agent execution first.
-- Add MCP tool execution.
-- Support worker agents backed by their own LangGraph graphs.
-- Upgrade stream events with agent started/completed and tool call events.
-- Add Alembic migrations.
-- Add trace persistence for workflow events.
-- Harden auth, errors, and deployment config.
+- 增加真实 `AgentExecutor`。
+- 通过 `agent_id` 加载 worker agent 配置。
+- 先支持简单 LLM agent 执行。
+- 接入 MCP tool execution。
+- 支持 worker agent 自己是 LangGraph graph。
+- 补充 agent started/completed、tool call 等事件。
+- 增加 Alembic 迁移。
+- 持久化 workflow event trace。
+- 加强鉴权、错误处理和部署配置。
 
-## Positioning
+## 项目定位
 
-This repository is best treated as a lightweight backend template for building a controllable LangGraph multi-agent workflow system.
+这个仓库适合作为一个可控的 LangGraph 多 Agent 工作流后端模板。
 
-It is not trying to replace full platforms like Dify, Flowise, or Langflow. The goal is smaller and more code-first:
+它不试图替代 Dify、Flowise、Langflow 这类完整平台。目标更小，也更代码优先：
 
 ```text
-clear backend structure
-explicit workflow registry
-simple agent/workflow composition
-database-backed conversations
-observable workflow progress
-easy to fork and modify
+清晰的后端结构
+显式 workflow registry
+简单的 agent/workflow 组合方式
+数据库持久化会话
+可观察的工作流进度
+方便 fork 和二次开发
 ```
 
-## License
+## 许可证
 
 MIT
