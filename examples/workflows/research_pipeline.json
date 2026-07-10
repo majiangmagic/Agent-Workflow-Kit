@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "kind": "workflow",
+  "name": "research_pipeline",
+  "entrypoint": "planner",
+  "nodes": {
+    "planner": {
+      "agent": "official_supervisor",
+      "extension": "supervisor"
+    },
+    "researcher": {
+      "agent": "research_agent"
+    },
+    "reviewer": {
+      "agent": "official_supervisor",
+      "state_agent": "review_supervisor",
+      "extension": "supervisor"
+    }
+  },
+  "edges": [
+    {
+      "from": "planner",
+      "to": "researcher"
+    },
+    {
+      "from": "researcher",
+      "to": "reviewer"
+    },
+    {
+      "from": "reviewer",
+      "to": "END"
+    }
+  ]
+}
