@@ -22,6 +22,7 @@ from app.core.langgraph.events import (
 from app.services.conversation_service import ConversationService, ActivityLogService
 from app.services.crew_service import CrewService, AgentService
 from app.services.workflow_service import WorkflowService
+from app.core.langgraph.workflows.supervisor_simple.state import normalize_node_name
 from app.schemas.crew import CrewResponse, AgentResponse
 from app.schemas.conversation import (
     ConversationCreate, 
@@ -106,7 +107,10 @@ async def build_workflow_for_conversation(
         )
 
     agents = await AgentService.get_agents(db, crew_id=crew.id)
-    supervisor = next((agent for agent in agents if agent.is_supervisor), None)
+    supervisor = next(
+        (agent for agent in agents if normalize_node_name(agent.name) == "supervisor"),
+        None,
+    ) or next((agent for agent in agents if agent.is_supervisor), None)
     if not supervisor:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

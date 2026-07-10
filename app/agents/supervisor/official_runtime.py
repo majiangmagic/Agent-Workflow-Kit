@@ -117,6 +117,15 @@ class OfficialSupervisorRuntime:
         self.model_name = model_name or ai_provider.SUPERVISOR_MODEL
         self.temperature = temperature
 
+    def with_state_config(self, state: SupervisorState) -> "OfficialSupervisorRuntime":
+        """Return a runtime configured from the agent state when available."""
+
+        return OfficialSupervisorRuntime(
+            system_prompt=state.get("system_prompt") or self.system_prompt,
+            model_name=state.get("model") or self.model_name,
+            temperature=state.get("temperature", self.temperature),
+        )
+
     def invoke(
         self,
         state: SupervisorState,

@@ -19,7 +19,8 @@ class OfficialSupervisorNode:
         state: SupervisorState,
         config: RunnableConfig | None = None,
     ) -> Dict:
-        return self.runtime.invoke(state, config=config)
+        runtime = self.runtime.with_state_config(state)
+        return runtime.invoke(state, config=config)
 
 
 official_supervisor = OfficialSupervisorNode()

@@ -33,8 +33,15 @@ class DelegatedAgentState(TypedDict):
 
 
 class SupervisorState(TypedDict):
-    """State owned by the supervisor agent within a workflow run."""
+    """Runtime state for an agent running the supervisor implementation."""
 
+    agent_id: str
+    agent_name: str
+    description: Optional[str]
+    system_prompt: Optional[str]
+    model: Optional[str]
+    temperature: float
+    tools: List[Dict[str, Any]]
     messages: List[BaseMessage]
     user_input: Optional[str]
     plan: Optional[Dict[str, Any]]
