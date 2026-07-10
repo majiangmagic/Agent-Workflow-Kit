@@ -48,6 +48,8 @@ def build_initial_state(
 
     agent_states = {}
     for agent_config in agents:
+        if agent_config.get("is_supervisor"):
+            continue
         agent_key = agent_config.get("id") or agent_config["name"]
         agent_states[agent_key] = {
             "agent_id": str(agent_key),

@@ -16,12 +16,19 @@ def test_delegated_agent_prompt_is_preserved_in_workflow_state():
         crew_id="crew-1",
         agents=[
             {
+                "id": "supervisor-1",
+                "name": "Supervisor",
+                "system_prompt": "You coordinate this crew.",
+                "is_supervisor": True,
+            },
+            {
                 "id": "writer-1",
                 "name": "Writer",
                 "description": "Creates concise user-facing summaries.",
                 "system_prompt": "You write concise responses.",
                 "model": "worker-model",
                 "temperature": 0.4,
+                "is_supervisor": False,
                 "tools": [{"name": "draft"}],
             }
         ],
@@ -31,6 +38,7 @@ def test_delegated_agent_prompt_is_preserved_in_workflow_state():
 
     writer_state = state["supervisor"]["agents"]["writer-1"]
 
+    assert "supervisor-1" not in state["supervisor"]["agents"]
     assert writer_state["agent_name"] == "Writer"
     assert writer_state["description"] == "Creates concise user-facing summaries."
     assert writer_state["system_prompt"] == "You write concise responses."

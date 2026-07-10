@@ -50,6 +50,7 @@ def agent_to_workflow_config(agent) -> Dict[str, Any]:
         "system_prompt": agent.system_prompt,
         "model": agent.model,
         "temperature": agent.temperature,
+        "is_supervisor": agent.is_supervisor,
         "tools": [],
     }
 
@@ -112,15 +113,9 @@ async def build_workflow_for_conversation(
             detail=f"No supervisor agent found for crew {crew.id}",
         )
 
-    delegated_agents = [
-        agent_to_workflow_config(agent)
-        for agent in agents
-        if not agent.is_supervisor
-    ]
     workflow, initial_state = WorkflowService.create_workflow_run(
         crew=crew,
-        supervisor_agent=agent_to_workflow_config(supervisor),
-        agents=delegated_agents,
+        agents=[agent_to_workflow_config(agent) for agent in agents],
         conversation_id=str(conversation.id),
         user_input=user_message.content,
     )

@@ -1,7 +1,7 @@
 """Service helpers for selecting and creating LangGraph workflows."""
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from app.core.langgraph.workflows.registry import workflow_registry
 from app.core.langgraph.workflows.supervisor_simple import (  # noqa: F401
@@ -28,7 +28,6 @@ class WorkflowService:
     def create_workflow(
         crew: Crew,
         agents: List[Dict[str, Any]],
-        supervisor_agent: Optional[Dict[str, Any]] = None,
     ):
         """Create the configured workflow for a crew.
 
@@ -47,7 +46,6 @@ class WorkflowService:
         workflow_factory = workflow_registry.get(workflow_type, fallback=True)
         return workflow_factory(
             crew_id=str(crew.id),
-            supervisor_agent=supervisor_agent,
             agents=agents,
         )
 
@@ -75,7 +73,6 @@ class WorkflowService:
     @staticmethod
     def create_workflow_run(
         crew: Crew,
-        supervisor_agent: Optional[Dict[str, Any]],
         agents: List[Dict[str, Any]],
         conversation_id: str,
         user_input: str,
@@ -84,7 +81,6 @@ class WorkflowService:
 
         workflow = WorkflowService.create_workflow(
             crew=crew,
-            supervisor_agent=supervisor_agent,
             agents=agents,
         )
         initial_state = WorkflowService.build_initial_state(

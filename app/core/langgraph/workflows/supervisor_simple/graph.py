@@ -19,9 +19,13 @@ from app.core.langgraph.workflows.registry import workflow_registry
 def create_supervisor_simple_graph(
     crew_id: str,
     agents: List[Dict],
-    supervisor_agent: Dict = None,
 ):
     """Create a compiled LangGraph for a simple supervisor agent crew."""
+
+    supervisor_agent = next(
+        (agent for agent in agents if agent.get("is_supervisor")),
+        None,
+    )
 
     workflow = StateGraph(SupervisorSimpleState)
     supervisor_graph_factory = agent_registry.get("supervisor")
