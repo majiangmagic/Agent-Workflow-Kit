@@ -23,7 +23,6 @@ def build_initial_state(
 ) -> SupervisorSimpleState:
     """Build the initial global state for a supervisor workflow run."""
 
-    short_term_memory = list(messages or [])
     agent_states = {}
     for agent_config in agents:
         agent_key = agent_config.get("id") or agent_config["name"]
@@ -34,7 +33,7 @@ def build_initial_state(
             "system_prompt": agent_config.get("system_prompt"),
             "model": agent_config.get("model"),
             "temperature": agent_config.get("temperature", 0.2),
-            "messages": list(short_term_memory),
+            "messages": [],
             "status": "idle",
             "results": None,
             "error": None,
@@ -43,7 +42,7 @@ def build_initial_state(
 
     return {
         "supervisor": {
-            "messages": list(short_term_memory),
+            "messages": [],
             "user_input": user_input,
             "plan": None,
             "action": None,

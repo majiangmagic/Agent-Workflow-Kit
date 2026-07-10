@@ -6,13 +6,14 @@ from typing import List, Optional, Dict, Any
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 
 from app.db.base import get_db
 from app.models.conversation import MessageRole, MessageStatus
 from app.models.activity_log import ActivityType
+from app.core.langgraph.checkpoint import get_checkpointer
 from app.core.langgraph.events import (
     WorkflowEventSink,
     reset_event_sink,
@@ -51,18 +52,6 @@ def agent_to_workflow_config(agent) -> Dict[str, Any]:
         "temperature": agent.temperature,
         "tools": [],
     }
-
-
-def message_to_langchain_message(message):
-    """Convert a stored conversation message into a LangChain message."""
-
-    if message.role == MessageRole.USER:
-        return HumanMessage(content=message.content)
-    if message.role in (MessageRole.ASSISTANT, MessageRole.AGENT):
-        return AIMessage(content=message.content)
-    if message.role == MessageRole.SYSTEM:
-        return SystemMessage(content=message.content)
-    return None
 
 
 def extract_workflow_response(final_state: Dict[str, Any]) -> str:
@@ -123,16 +112,6 @@ async def build_workflow_for_conversation(
             detail=f"No supervisor agent found for crew {crew.id}",
         )
 
-    messages = await ConversationService.get_messages(db, conversation.id)
-    history_messages = []
-    for message in messages:
-        if message.id == user_message.id:
-            continue
-
-        langchain_message = message_to_langchain_message(message)
-        if langchain_message is not None:
-            history_messages.append(langchain_message)
-
     delegated_agents = [
         agent_to_workflow_config(agent)
         for agent in agents
@@ -143,7 +122,6 @@ async def build_workflow_for_conversation(
         supervisor_agent=agent_to_workflow_config(supervisor),
         agents=delegated_agents,
         conversation_id=str(conversation.id),
-        messages=history_messages[-10:],
         user_input=user_message.content,
     )
 
@@ -170,7 +148,10 @@ async def run_chat_turn(
     )
 
     try:
-        final_state = await workflow.ainvoke(initial_state)
+        final_state = await workflow.ainvoke(
+            initial_state,
+            config={"configurable": {"thread_id": str(conversation.id)}},
+        )
         response_content = extract_workflow_response(final_state)
     except Exception as e:
         print(f"Error running supervisor workflow: {str(e)}")
@@ -336,6 +317,9 @@ async def delete_conversation(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation with ID {conversation_id} not found"
         )
+    checkpointer = get_checkpointer()
+    if checkpointer is not None:
+        await checkpointer.adelete_thread(str(conversation_id))
     return None
 
 
@@ -494,7 +478,10 @@ async def chat_stream(
                         "conversation_id": str(conversation_id),
                     }
                 )
-                final = await workflow.ainvoke(initial_state)
+                final = await workflow.ainvoke(
+                    initial_state,
+                    config={"configurable": {"thread_id": str(conversation_id)}},
+                )
                 sink.emit(
                     {
                         "id": message_id,

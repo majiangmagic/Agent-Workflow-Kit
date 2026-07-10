@@ -4,11 +4,13 @@ import re
 from typing import Any, Dict, List, Tuple
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, MessagesState, StateGraph
 from langgraph_supervisor import create_supervisor
 
 from app.agents.supervisor.state import DelegatedAgentState, SupervisorState
 from app.core.langgraph.events import emit_event
+from app.core.langgraph.checkpoint import get_checkpointer
 from app.services.ai_provider import ai_provider
 
 
@@ -116,7 +118,11 @@ class OfficialSupervisorRuntime:
         self.model_name = model_name or ai_provider.SUPERVISOR_MODEL
         self.temperature = temperature
 
-    def invoke(self, state: SupervisorState) -> SupervisorState:
+    def invoke(
+        self,
+        state: SupervisorState,
+        config: RunnableConfig | None = None,
+    ) -> SupervisorState:
         """Run the official supervisor graph and map its result back."""
 
         emit_event(
@@ -128,6 +134,7 @@ class OfficialSupervisorRuntime:
             }
         )
 
+        checkpointer = get_checkpointer()
         official_agents, runtime_to_agent_key = self._build_agent_graphs(state)
         model = ai_provider.get_model(
             model_name=self.model_name,
@@ -140,9 +147,12 @@ class OfficialSupervisorRuntime:
             output_mode="full_history",
             handoff_tool_prefix="delegate_to",
             include_agent_name="inline",
-        ).compile()
+        ).compile(checkpointer=checkpointer)
 
-        result = workflow.invoke({"messages": build_official_messages(state)})
+        result = workflow.invoke(
+            {"messages": build_official_messages(state)},
+            config=config,
+        )
         updated_state = self._map_result(state, result.get("messages", []))
 
         emit_event(
@@ -244,6 +254,7 @@ class OfficialSupervisorRuntime:
             "agents": updated_agents,
             "plan": None,
             "action": None,
+            "user_input": None,
         }
 
     def _summarize(self, state: SupervisorState) -> Dict[str, Any]:

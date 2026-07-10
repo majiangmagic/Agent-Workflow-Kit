@@ -3,8 +3,6 @@
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from langchain_core.messages import BaseMessage
-
 from app.core.langgraph.workflows.registry import workflow_registry
 from app.core.langgraph.workflows.supervisor_simple import (  # noqa: F401
     create_supervisor_simple_graph,
@@ -58,7 +56,6 @@ class WorkflowService:
         crew: Crew,
         agents: List[Dict[str, Any]],
         conversation_id: str,
-        messages: List[BaseMessage],
         user_input: str,
     ) -> Dict[str, Any]:
         """Build the configured workflow's initial state from common context."""
@@ -72,7 +69,6 @@ class WorkflowService:
             crew_id=str(crew.id),
             agents=agents,
             conversation_id=conversation_id,
-            messages=messages,
             user_input=user_input,
         )
 
@@ -82,7 +78,6 @@ class WorkflowService:
         supervisor_agent: Optional[Dict[str, Any]],
         agents: List[Dict[str, Any]],
         conversation_id: str,
-        messages: List[BaseMessage],
         user_input: str,
     ) -> Tuple[Any, Dict[str, Any]]:
         """Create a workflow and its initial state without exposing state shape."""
@@ -96,7 +91,6 @@ class WorkflowService:
             crew=crew,
             agents=agents,
             conversation_id=conversation_id,
-            messages=messages,
             user_input=user_input,
         )
         return workflow, initial_state

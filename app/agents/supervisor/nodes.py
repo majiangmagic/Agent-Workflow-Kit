@@ -2,6 +2,8 @@
 
 from typing import Dict
 
+from langchain_core.runnables import RunnableConfig
+
 from app.agents.supervisor.official_runtime import OfficialSupervisorRuntime
 from app.agents.supervisor.state import SupervisorState
 
@@ -12,8 +14,12 @@ class OfficialSupervisorNode:
     def __init__(self, runtime: OfficialSupervisorRuntime | None = None) -> None:
         self.runtime = runtime or OfficialSupervisorRuntime()
 
-    def __call__(self, state: SupervisorState) -> Dict:
-        return self.runtime.invoke(state)
+    def __call__(
+        self,
+        state: SupervisorState,
+        config: RunnableConfig | None = None,
+    ) -> Dict:
+        return self.runtime.invoke(state, config=config)
 
 
 official_supervisor = OfficialSupervisorNode()

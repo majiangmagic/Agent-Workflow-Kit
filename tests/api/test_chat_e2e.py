@@ -64,7 +64,7 @@ async def test_create_crew_agents_and_chat_end_to_end(db_session):
             assert worker_response.status_code == 201
             assert worker_response.json()["model"] == AIProvider.DEFAULT_MODEL
 
-            def fake_official_supervisor_invoke(state):
+            def fake_official_supervisor_invoke(state, config=None):
                 return {
                     **state,
                     "messages": state["messages"]

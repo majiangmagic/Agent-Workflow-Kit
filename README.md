@@ -11,6 +11,7 @@
 - 统一聊天入口 `POST /api/chat`
 - `chat` 请求接入 `supervisor_simple` 工作流
 - Supervisor 内部使用官方 `langgraph-supervisor` 引擎
+- 短期记忆使用官方 LangGraph checkpoint
 - 工作流运行进度事件流
 - PostgreSQL 主数据库
 - SQLAlchemy 模型和 service 层
@@ -24,7 +25,7 @@ HTTP API
   -> WorkflowService
   -> supervisor_simple workflow
   -> supervisor agent graph
-  -> messages / activity logs
+  -> LangGraph checkpoint / messages / activity logs
 ```
 
 `supervisor_simple` 是当前默认工作流。它内部运行一个 supervisor agent graph：
@@ -180,6 +181,7 @@ http://localhost:8000/api/redoc
 3. 给 crew 创建一个或多个 worker agent。
 4. 调用 `POST /api/chat`。
 5. 用 `GET /api/conversations/{conversation_id}/messages` 查看入库消息。
+6. 同一 `conversation_id` 会复用同一个 checkpoint thread，程序重启后也能继续会话。
 
 端到端测试覆盖了这条路径，并且不会调用真实模型。
 

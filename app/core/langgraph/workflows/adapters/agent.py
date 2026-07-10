@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
+from langchain_core.runnables import RunnableConfig
+
 AgentStatePreparer = Callable[[Dict[str, Any]], Dict[str, Any]]
 WorkflowUpdateBuilder = Callable[[Dict[str, Any]], Dict[str, Any]]
 
@@ -22,7 +24,10 @@ def create_agent_node(
 ):
     """Create a workflow node from a reusable agent graph."""
 
-    def run_agent(state: Dict[str, Any]) -> Dict[str, Any]:
+    def run_agent(
+        state: Dict[str, Any],
+        config: RunnableConfig | None = None,
+    ) -> Dict[str, Any]:
         """Run one agent graph and return only the workflow fields it updates."""
 
         agent_state = (
@@ -30,7 +35,7 @@ def create_agent_node(
             if extension is not None
             else state[agent_name]
         )
-        updated_agent_state = agent_graph.invoke(agent_state)
+        updated_agent_state = agent_graph.invoke(agent_state, config=config)
 
         if extension is not None:
             return extension.build_workflow_update(updated_agent_state)
