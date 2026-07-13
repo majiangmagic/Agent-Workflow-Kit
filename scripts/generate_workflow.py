@@ -176,26 +176,22 @@ __all__ = [
 def render_graph(workflow: WorkflowDsl) -> str:
     factory_name = f"create_{workflow.name}_graph"
     agent_imports = "\n".join(
-        f"import app.agents.{agent}.graph  # noqa: F401"
+        f"from app.agents.{agent}.graph import create_graph as create_{agent}_graph"
         for agent in sorted({node.agent for node in workflow.nodes})
     )
     extension_import_text, extension_by_node = extension_imports(workflow)
-    node_specs = "\n".join(render_node_spec(node, extension_by_node) for node in workflow.nodes)
-    edge_specs = "\n".join(
-        f'''        WorkflowEdgeSpec(source="{edge.source}", target={"END" if edge.target == "END" else repr(edge.target)}),'''
+    node_calls = "\n".join(render_node_call(node, extension_by_node) for node in workflow.nodes)
+    edge_calls = "\n".join(
+        f'''    workflow.add_edge("{edge.source}", {"END" if edge.target == "END" else repr(edge.target)})'''
         for edge in workflow.edges
     )
     imports = "\n".join(
         part
         for part in [
-            "from langgraph.graph import END",
+            "from langgraph.graph import END, StateGraph",
             extension_import_text,
-            "from app.core.langgraph.workflows.declarative import (",
-            "    WorkflowDefinition,",
-            "    WorkflowEdgeSpec,",
-            "    WorkflowNodeSpec,",
-            "    compile_workflow_definition,",
-            ")",
+            "from app.core.langgraph.checkpoint import get_checkpointer",
+            "from app.core.langgraph.workflows.adapters.agent import create_agent_node",
         ]
         if part
     )
@@ -206,31 +202,29 @@ from typing import Any, Dict, List
 {agent_imports}
 {imports}
 from app.core.langgraph.workflows.registry import workflow_registry
-from app.core.langgraph.workflows.{workflow.name}.state import build_initial_state
-
-WORKFLOW_DEFINITION = WorkflowDefinition(
-    name="{workflow.name}",
-    entrypoint="{workflow.entrypoint}",
-    nodes=[
-{node_specs}
-    ],
-    edges=[
-{edge_specs}
-    ],
+from app.core.langgraph.workflows.{workflow.name}.state import (
+    {workflow.state_alias},
+    build_initial_state,
 )
+
+WORKFLOW_NAME = "{workflow.name}"
 
 
 def {factory_name}(
     crew_id: str,
     agents: List[Dict[str, Any]],
 ):
-    """Create a compiled LangGraph from the declarative workflow spec."""
+    """Create this workflow with native LangGraph primitives."""
 
-    return compile_workflow_definition(WORKFLOW_DEFINITION)
+    workflow = StateGraph({workflow.state_alias})
+{node_calls}
+{edge_calls}
+    workflow.set_entry_point("{workflow.entrypoint}")
+    return workflow.compile(checkpointer=get_checkpointer())
 
 
 workflow_registry.register(
-    WORKFLOW_DEFINITION.name,
+    WORKFLOW_NAME,
     {factory_name},
     state_builder=build_initial_state,
 )
@@ -257,23 +251,29 @@ def extension_imports(workflow: WorkflowDsl) -> tuple[str, Dict[str, str]]:
     return "\n".join(sorted(set(imports))), mapping
 
 
-def render_node_spec(
+def render_node_call(
     node: WorkflowNodeDsl,
     extension_by_node: Dict[str, str],
 ) -> str:
-    state_agent = f',\n            state_agent="{node.state_agent}"' if node.state_agent else ""
     extension = (
-        f",\n            extension_factory={extension_by_node[node.name]}"
+        f',\n            extension={extension_by_node[node.name]}("{node.name}"),'
         if node.name in extension_by_node
         else ""
     )
-    return f'''        WorkflowNodeSpec(
-            name="{node.name}",
-            agent="{node.agent}"{state_agent}{extension},
-        ),'''
+    return f'''    workflow.add_node(
+        "{node.name}",
+        create_agent_node(
+            "{node.name}",
+            create_{node.agent}_graph(),{extension}
+        ),
+    )'''
 
 
 def render_state(workflow: WorkflowDsl) -> str:
+    node_agents = "\n".join(
+        f'    "{node.name}": "{node.state_agent or node.agent}",'
+        for node in workflow.nodes
+    )
     return f'''"""State helpers for the {workflow.name} workflow."""
 
 from typing import Any, Dict, List, Optional
@@ -288,6 +288,11 @@ from app.core.langgraph.workflows.declarative import (
 
 {workflow.state_alias} = WorkflowState
 
+WORKFLOW_NAME = "{workflow.name}"
+NODE_AGENTS = {{
+{node_agents}
+}}
+
 
 def build_initial_state(
     crew_id: str,
@@ -298,10 +303,9 @@ def build_initial_state(
 ) -> WorkflowState:
     """Build initial state for this workflow definition."""
 
-    from app.core.langgraph.workflows.{workflow.name}.graph import WORKFLOW_DEFINITION
-
     return build_workflow_initial_state(
-        definition=WORKFLOW_DEFINITION,
+        workflow_name=WORKFLOW_NAME,
+        node_agents=NODE_AGENTS,
         crew_id=crew_id,
         agents=agents,
         conversation_id=conversation_id,

@@ -1,21 +1,8 @@
-"""Declarative workflow building blocks.
+"""Shared workflow state helpers."""
 
-Workflow modules should describe nodes and edges here, then let the shared
-compiler build LangGraph objects and initial state mechanically.
-"""
-
-from dataclasses import dataclass, field
-from typing import Annotated, Any, Dict, List, Optional, TypedDict
+from typing import Annotated, Any, Dict, List, Mapping, Optional, TypedDict
 
 from langchain_core.messages import BaseMessage
-from langgraph.graph import END, StateGraph
-
-from app.agents.registry import agent_registry
-from app.core.langgraph.checkpoint import get_checkpointer
-from app.core.langgraph.workflows.adapters.agent import (
-    AgentNodeExtensionFactory,
-    create_agent_node,
-)
 
 
 def normalize_node_name(name: str) -> str:
@@ -55,46 +42,18 @@ class WorkflowState(TypedDict):
     user_input: Optional[str]
 
 
-@dataclass(frozen=True)
-class WorkflowNodeSpec:
-    """Declarative description of one workflow node."""
-
-    name: str
-    agent: Optional[str] = None
-    state_agent: Optional[str] = None
-    extension_factory: Optional[AgentNodeExtensionFactory] = None
-
-
-@dataclass(frozen=True)
-class WorkflowEdgeSpec:
-    """Declarative description of one directed workflow edge."""
-
-    source: str
-    target: str
-
-
-@dataclass(frozen=True)
-class WorkflowDefinition:
-    """A workflow graph that can be generated from data."""
-
-    name: str
-    entrypoint: str
-    nodes: List[WorkflowNodeSpec]
-    edges: List[WorkflowEdgeSpec] = field(default_factory=list)
-
-
 def build_agent_runtime_state(
-    node: WorkflowNodeSpec,
+    node_name: str,
     agent_config: Dict[str, Any],
     user_input: Optional[str],
     messages: Optional[List[BaseMessage]] = None,
 ) -> Dict[str, Any]:
     """Project a DB agent config into a node-local runtime state."""
 
-    agent_key = agent_config.get("id") or node.name
+    agent_key = agent_config.get("id") or node_name
     return {
         "agent_id": str(agent_key),
-        "agent_name": agent_config.get("name", node.name),
+        "agent_name": agent_config.get("name", node_name),
         "description": agent_config.get("description"),
         "system_prompt": agent_config.get("system_prompt"),
         "model": agent_config.get("model"),
@@ -112,14 +71,15 @@ def build_agent_runtime_state(
 
 
 def build_workflow_initial_state(
-    definition: WorkflowDefinition,
+    workflow_name: str,
+    node_agents: Mapping[str, str],
     crew_id: str,
     agents: List[Dict[str, Any]],
     conversation_id: str = "",
     messages: Optional[List[BaseMessage]] = None,
     user_input: Optional[str] = None,
 ) -> WorkflowState:
-    """Build initial state from a workflow definition and agent configs."""
+    """Build initial state from workflow node names and agent configs."""
 
     agents_by_name = {
         normalize_node_name(agent_config["name"]): agent_config
@@ -127,7 +87,7 @@ def build_workflow_initial_state(
     }
     agent_catalog = {
         node_name: build_agent_runtime_state(
-            node=WorkflowNodeSpec(name=node_name),
+            node_name=node_name,
             agent_config=agent_config,
             user_input=user_input,
             messages=[],
@@ -135,16 +95,16 @@ def build_workflow_initial_state(
         for node_name, agent_config in agents_by_name.items()
     }
     node_states = {}
-    for node in definition.nodes:
-        state_agent_name = normalize_node_name(node.state_agent or node.name)
+    for node_name, state_agent_name in node_agents.items():
+        state_agent_name = normalize_node_name(state_agent_name)
         agent_config = agents_by_name.get(state_agent_name)
         if agent_config is None:
             raise ValueError(
-                f"Workflow '{definition.name}' requires an agent named "
-                f"'{node.state_agent or node.name}'"
+                f"Workflow '{workflow_name}' requires an agent named "
+                f"'{state_agent_name}'"
             )
-        node_states[node.name] = build_agent_runtime_state(
-            node=node,
+        node_states[node_name] = build_agent_runtime_state(
+            node_name=node_name,
             agent_config=agent_config,
             user_input=user_input,
             messages=messages,
@@ -157,35 +117,3 @@ def build_workflow_initial_state(
         "conversation_id": conversation_id,
         "user_input": user_input,
     }
-
-
-def compile_workflow_definition(definition: WorkflowDefinition):
-    """Compile a declarative workflow definition into a LangGraph."""
-
-    workflow = StateGraph(WorkflowState)
-    for node in definition.nodes:
-        agent_name = node.agent or node.name
-        agent_graph_factory = agent_registry.get(agent_name)
-        if agent_graph_factory is None:
-            raise ValueError(f"Agent graph factory '{agent_name}' is not registered")
-
-        extension = (
-            node.extension_factory(node.name)
-            if node.extension_factory is not None
-            else None
-        )
-        workflow.add_node(
-            node.name,
-            create_agent_node(
-                node.name,
-                agent_graph_factory(),
-                extension=extension,
-            ),
-        )
-
-    for edge in definition.edges:
-        target = END if edge.target == END else edge.target
-        workflow.add_edge(edge.source, target)
-
-    workflow.set_entry_point(definition.entrypoint)
-    return workflow.compile(checkpointer=get_checkpointer())

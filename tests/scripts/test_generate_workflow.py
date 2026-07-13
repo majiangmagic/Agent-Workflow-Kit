@@ -60,17 +60,18 @@ def test_generate_workflow_writes_to_patched_workflows_dir(tmp_path, monkeypatch
     state_text = (workflow_dir / "state.py").read_text(encoding="utf-8")
 
     assert not (workflow_dir / "spec.py").exists()
-    assert 'name="research_pipeline"' in graph_text
-    assert 'entrypoint="planner"' in graph_text
-    assert 'name="planner"' in graph_text
-    assert 'agent="official_supervisor"' in graph_text
-    assert 'state_agent="review_supervisor"' in graph_text
-    assert "extension_factory=create_supervisor_extension" in graph_text
-    assert 'WorkflowEdgeSpec(source="reviewer", target=END)' in graph_text
-    assert "import app.agents.official_supervisor.graph" in graph_text
-    assert "import app.agents.research_agent.graph" in graph_text
+    assert 'WORKFLOW_NAME = "research_pipeline"' in graph_text
+    assert "workflow = StateGraph(ResearchPipelineState)" in graph_text
+    assert 'workflow.add_node(\n        "planner",' in graph_text
+    assert 'create_official_supervisor_graph()' in graph_text
+    assert 'extension=create_supervisor_extension("planner")' in graph_text
+    assert 'workflow.add_edge("reviewer", END)' in graph_text
+    assert 'workflow.set_entry_point("planner")' in graph_text
+    assert "create_research_agent_graph" in graph_text
     assert "ResearchPipelineState = WorkflowState" in state_text
-    assert "from app.core.langgraph.workflows.research_pipeline.graph import" in state_text
+    assert '"planner": "official_supervisor"' in state_text
+    assert '"researcher": "research_agent"' in state_text
+    assert '"reviewer": "review_supervisor"' in state_text
 
 
 def test_generate_workflow_rejects_edges_to_missing_nodes(tmp_path, monkeypatch):

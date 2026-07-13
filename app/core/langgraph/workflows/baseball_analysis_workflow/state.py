@@ -12,6 +12,12 @@ from app.core.langgraph.workflows.declarative import (
 
 BaseballAnalysisWorkflowState = WorkflowState
 
+WORKFLOW_NAME = "baseball_analysis_workflow"
+NODE_AGENTS = {
+    "supervisor": "supervisor",
+    "baseball_analyst": "baseball_analysis_agent",
+}
+
 
 def build_initial_state(
     crew_id: str,
@@ -22,12 +28,9 @@ def build_initial_state(
 ) -> WorkflowState:
     """Build initial state for this workflow definition."""
 
-    from app.core.langgraph.workflows.baseball_analysis_workflow.graph import (
-        WORKFLOW_DEFINITION,
-    )
-
     return build_workflow_initial_state(
-        definition=WORKFLOW_DEFINITION,
+        workflow_name=WORKFLOW_NAME,
+        node_agents=NODE_AGENTS,
         crew_id=crew_id,
         agents=agents,
         conversation_id=conversation_id,

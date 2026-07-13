@@ -2,46 +2,43 @@
 
 from typing import Any, Dict, List
 
-import app.agents.official_supervisor.graph  # noqa: F401
-from langgraph.graph import END
+from app.agents.official_supervisor.graph import create_official_supervisor_graph
+from langgraph.graph import END, StateGraph
 
+from app.core.langgraph.checkpoint import get_checkpointer
+from app.core.langgraph.workflows.adapters.agent import create_agent_node
 from app.core.langgraph.workflows.adapters.supervisor import create_supervisor_extension
-from app.core.langgraph.workflows.declarative import (
-    WorkflowDefinition,
-    WorkflowEdgeSpec,
-    WorkflowNodeSpec,
-    compile_workflow_definition,
-)
 from app.core.langgraph.workflows.registry import workflow_registry
-from app.core.langgraph.workflows.supervisor_simple.state import build_initial_state
-
-WORKFLOW_DEFINITION = WorkflowDefinition(
-    name="supervisor_simple",
-    entrypoint="supervisor",
-    nodes=[
-        WorkflowNodeSpec(
-            name="supervisor",
-            agent="official_supervisor",
-            extension_factory=create_supervisor_extension,
-        ),
-    ],
-    edges=[
-        WorkflowEdgeSpec(source="supervisor", target=END),
-    ],
+from app.core.langgraph.workflows.supervisor_simple.state import (
+    SupervisorSimpleState,
+    build_initial_state,
 )
+
+WORKFLOW_NAME = "supervisor_simple"
 
 
 def create_supervisor_simple_graph(
     crew_id: str,
     agents: List[Dict[str, Any]],
 ):
-    """Create a compiled LangGraph from the declarative workflow spec."""
+    """Create the supervisor workflow with native LangGraph primitives."""
 
-    return compile_workflow_definition(WORKFLOW_DEFINITION)
+    workflow = StateGraph(SupervisorSimpleState)
+    workflow.add_node(
+        "supervisor",
+        create_agent_node(
+            "supervisor",
+            create_official_supervisor_graph(),
+            extension=create_supervisor_extension("supervisor"),
+        ),
+    )
+    workflow.add_edge("supervisor", END)
+    workflow.set_entry_point("supervisor")
+    return workflow.compile(checkpointer=get_checkpointer())
 
 
 workflow_registry.register(
-    WORKFLOW_DEFINITION.name,
+    WORKFLOW_NAME,
     create_supervisor_simple_graph,
     state_builder=build_initial_state,
 )
