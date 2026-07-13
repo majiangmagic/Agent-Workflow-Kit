@@ -3,6 +3,7 @@
 from langchain_core.messages import AIMessage
 
 from app.agents.official_supervisor.official_runtime import OfficialSupervisorRuntime
+from app.core.langgraph.workflows.adapters.agent import trim_agent_memory
 from app.core.langgraph.workflows.declarative import merge_node_states
 from app.core.langgraph.workflows.supervisor_simple.state import (
     build_initial_state,
@@ -118,3 +119,25 @@ def test_checkpointed_supervisor_messages_survive_new_turn_input():
 
     assert merged["supervisor"]["messages"] == current["supervisor"]["messages"]
     assert merged["supervisor"]["user_input"] == "Continue the conversation"
+
+
+def test_short_term_memory_keeps_last_ten_turns():
+    """Short-term memory should keep the recent 20 messages by default."""
+
+    messages = [AIMessage(content=f"message-{index}") for index in range(25)]
+
+    trimmed = trim_agent_memory(
+        {
+            "messages": messages,
+            "agents": {
+                "writer": {
+                    "messages": messages,
+                }
+            },
+        }
+    )
+
+    assert len(trimmed["messages"]) == 20
+    assert trimmed["messages"][0].content == "message-5"
+    assert len(trimmed["agents"]["writer"]["messages"]) == 20
+    assert trimmed["agents"]["writer"]["messages"][0].content == "message-5"

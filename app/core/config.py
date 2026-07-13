@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     
     # MCP Server Configuration
     mcp_test_server_url: str = "https://searchapi-mcp.prod.diginext.site/mcp"
+
+    # Workflow memory settings
+    short_term_memory_turns: int = 10
     
     # Cloudflare R2 settings
     r2_endpoint: Optional[str] = None

@@ -5,6 +5,8 @@ from typing import Any, Callable, Dict, Optional
 
 from langchain_core.runnables import RunnableConfig
 
+from app.core.config import settings
+
 AgentStatePreparer = Callable[[Dict[str, Any]], Dict[str, Any]]
 WorkflowUpdateBuilder = Callable[[Dict[str, Any]], Dict[str, Any]]
 AgentNodeExtensionFactory = Callable[[str], "AgentNodeExtension"]
@@ -16,6 +18,30 @@ class AgentNodeExtension:
 
     prepare_agent_state: AgentStatePreparer
     build_workflow_update: WorkflowUpdateBuilder
+
+
+def trim_agent_memory(agent_state: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep only the recent short-term message window in an agent state."""
+
+    max_messages = max(settings.short_term_memory_turns, 0) * 2
+    if max_messages == 0:
+        return agent_state
+
+    trimmed = dict(agent_state)
+    messages = trimmed.get("messages")
+    if isinstance(messages, list) and len(messages) > max_messages:
+        trimmed["messages"] = messages[-max_messages:]
+
+    agents = trimmed.get("agents")
+    if isinstance(agents, dict):
+        trimmed["agents"] = {
+            agent_name: trim_agent_memory(agent)
+            if isinstance(agent, dict)
+            else agent
+            for agent_name, agent in agents.items()
+        }
+
+    return trimmed
 
 
 def create_agent_node(
@@ -36,7 +62,9 @@ def create_agent_node(
             if extension is not None
             else state["nodes"][agent_name]
         )
+        agent_state = trim_agent_memory(agent_state)
         updated_agent_state = agent_graph.invoke(agent_state, config=config)
+        updated_agent_state = trim_agent_memory(updated_agent_state)
 
         if extension is not None:
             return extension.build_workflow_update(updated_agent_state)
