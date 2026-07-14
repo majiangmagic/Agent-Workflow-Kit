@@ -7,40 +7,49 @@ from langchain_core.runnables import RunnableConfig
 
 from app.agents.prompt_generation.prompt_writer.state import PromptWriterState
 
-# 本文件由 scripts/generate_agent.py 刷新骨架。
-# 中文注意：
-# - 只在 <agent-node ...> 代码块内部编写业务逻辑。
-# - 节点名是 DSL 的稳定标识；节点名不变，刷新时保留对应代码块。
-# - 新 DSL 删除某个节点名时，对应代码块会被删除，不会因为里面有人写过代码而保留。
 
-# <agent-node name="write_prompt">
-# 中文注意：
-# 1. 节点名 "write_prompt" 是 DSL 的稳定标识，不要随手改名。
-# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
-# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def append_unique(parts: list[str], value: Any) -> None:
+    """Append comma-separated prompt terms without repeating existing terms."""
+
+    if not value:
+        return
+    existing = {part.strip().lower() for part in parts}
+    for raw_term in str(value).split(","):
+        term = raw_term.strip()
+        if not term:
+            continue
+        key = term.lower()
+        if key in existing:
+            continue
+        parts.append(term)
+        existing.add(key)
+
+
 def write_prompt_node(
     state: PromptWriterState,
     config: RunnableConfig | None = None,
 ) -> Dict[str, Any]:
-    """Write the first prompt draft from requirements and tags."""
+    """Write the first prompt draft from requirements and generated parts."""
 
     requirements = state.get("requirements_json") or {}
     raw_request = str(requirements.get("raw_request") or state.get("user_input") or "")
     subject = str(requirements.get("subject") or raw_request or "image subject")
     quality = ", ".join(requirements.get("quality") or ["high detail"])
-    tags = ", ".join(state.get("danbooru_tags") or [])
+    generated_parts = [
+        state.get("character_prompt"),
+        state.get("scene_prompt"),
+        state.get("special_prompt"),
+    ]
+    prompt_terms: list[str] = []
+    for part in generated_parts:
+        append_unique(prompt_terms, part)
+    if not prompt_terms:
+        append_unique(prompt_terms, subject)
+    append_unique(prompt_terms, ", ".join(state.get("danbooru_tags") or []))
+    append_unique(prompt_terms, quality)
+    append_unique(prompt_terms, "strong composition")
 
-    draft = ", ".join(
-        part
-        for part in [
-            subject,
-            tags,
-            quality,
-            "strong composition",
-            "coherent lighting",
-        ]
-        if part
-    )
+    draft = ", ".join(prompt_terms)
     negative = ", ".join(
         (requirements.get("constraints") or {}).get(
             "avoid", ["low quality", "blurry", "bad anatomy"]
@@ -56,4 +65,3 @@ def write_prompt_node(
             )
         ],
     }
-# </agent-node>

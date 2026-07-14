@@ -106,6 +106,7 @@ h1 {
 
 .primary-button,
 .secondary-button,
+.danger-button,
 .composer button {
   height: 38px;
   border-radius: 7px;
@@ -126,8 +127,21 @@ h1 {
   color: #1f2937;
 }
 
+.danger-button {
+  border: 1px solid #fecaca;
+  background: #fff5f5;
+  color: #b91c1c;
+}
+
+.button-row {
+  display: grid;
+  grid-template-columns: 1fr 94px;
+  gap: 8px;
+}
+
 .primary-button:disabled,
 .secondary-button:disabled,
+.danger-button:disabled,
 .composer button:disabled {
   background: #9aa8bd;
   cursor: not-allowed;
@@ -162,6 +176,13 @@ h1 {
   padding-right: 2px;
 }
 
+.conversation-row {
+  display: grid;
+  grid-template-columns: 1fr 32px;
+  gap: 6px;
+  align-items: stretch;
+}
+
 .conversation-item {
   display: grid;
   gap: 4px;
@@ -174,9 +195,19 @@ h1 {
   cursor: pointer;
 }
 
-.conversation-item.active {
+.conversation-row.active .conversation-item {
   border-color: #2563eb;
   background: #eff6ff;
+}
+
+.delete-mini {
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff5f5;
+  color: #b91c1c;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
 }
 
 .conversation-title {
@@ -262,7 +293,7 @@ h1 {
 .message-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   overflow: auto;
   padding: 22px;
 }
@@ -273,19 +304,16 @@ h1 {
 }
 
 .message {
-  max-width: min(780px, 86%);
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #ffffff;
-  padding: 12px 14px;
+  display: grid;
+  gap: 5px;
+  max-width: min(820px, 86%);
   white-space: pre-wrap;
   line-height: 1.55;
 }
 
 .message.user {
   align-self: flex-end;
-  border-color: #bfdbfe;
-  background: #eff6ff;
+  text-align: right;
 }
 
 .message.assistant,
@@ -294,11 +322,22 @@ h1 {
 }
 
 .message-role {
-  display: block;
-  margin-bottom: 5px;
   color: #667085;
   font-size: 12px;
   font-weight: 700;
+}
+
+.message-bubble {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.message.user .message-bubble {
+  border-color: #bfdbfe;
+  background: #eff6ff;
 }
 
 .composer {

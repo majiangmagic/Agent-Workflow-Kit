@@ -18,6 +18,30 @@
       "type": "list",
       "optional": true
     },
+    "character_prompt": {
+      "type": "string",
+      "optional": true
+    },
+    "character_tags": {
+      "type": "list",
+      "optional": true
+    },
+    "scene_prompt": {
+      "type": "string",
+      "optional": true
+    },
+    "scene_tags": {
+      "type": "list",
+      "optional": true
+    },
+    "special_prompt": {
+      "type": "string",
+      "optional": true
+    },
+    "special_tags": {
+      "type": "list",
+      "optional": true
+    },
     "draft_prompt": {
       "type": "string",
       "optional": true

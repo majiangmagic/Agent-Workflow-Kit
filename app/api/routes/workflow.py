@@ -72,6 +72,27 @@ def sample_agents_for_workflow(workflow_name: str) -> list[dict]:
                 "temperature": 0.2,
             },
             {
+                "name": "character_prompt_generator",
+                "description": "Builds the character part of an image prompt.",
+                "system_prompt": "Generate character-focused prompt tags.",
+                "is_supervisor": False,
+                "temperature": 0.2,
+            },
+            {
+                "name": "scene_prompt_generator",
+                "description": "Builds the scene part of an image prompt.",
+                "system_prompt": "Generate scene-focused prompt tags.",
+                "is_supervisor": False,
+                "temperature": 0.2,
+            },
+            {
+                "name": "special_prompt_generator",
+                "description": "Builds special style/action/composition prompt parts.",
+                "system_prompt": "Generate special prompt tags.",
+                "is_supervisor": False,
+                "temperature": 0.2,
+            },
+            {
                 "name": "prompt_writer",
                 "description": "Writes image generation prompt drafts.",
                 "system_prompt": "Write clear image generation prompts.",

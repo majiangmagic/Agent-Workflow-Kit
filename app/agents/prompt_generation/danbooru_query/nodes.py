@@ -7,17 +7,7 @@ from langchain_core.runnables import RunnableConfig
 
 from app.agents.prompt_generation.danbooru_query.state import PromptDanbooruQueryState
 
-# 本文件由 scripts/generate_agent.py 刷新骨架。
-# 中文注意：
-# - 只在 <agent-node ...> 代码块内部编写业务逻辑。
-# - 节点名是 DSL 的稳定标识；节点名不变，刷新时保留对应代码块。
-# - 新 DSL 删除某个节点名时，对应代码块会被删除，不会因为里面有人写过代码而保留。
 
-# <agent-node name="query_tags">
-# 中文注意：
-# 1. 节点名 "query_tags" 是 DSL 的稳定标识，不要随手改名。
-# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
-# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
 def query_tags_node(
     state: PromptDanbooruQueryState,
     config: RunnableConfig | None = None,
@@ -42,6 +32,23 @@ def query_tags_node(
             if tag not in tags:
                 tags.append(tag)
 
+    for character in requirements.get("characters") or []:
+        if not isinstance(character, dict):
+            continue
+        for tag in character.get("tags") or []:
+            tag = str(tag)
+            if tag not in tags:
+                tags.append(tag)
+
+    for section_name in ["scene", "special"]:
+        section = requirements.get(section_name) or {}
+        if not isinstance(section, dict):
+            continue
+        for tag in section.get("tags") or []:
+            tag = str(tag)
+            if tag not in tags:
+                tags.append(tag)
+
     keyword_tags = [
         ("girl", "1girl"),
         ("boy", "1boy"),
@@ -51,6 +58,13 @@ def query_tags_node(
         ("rain", "rain"),
         ("night", "night"),
         ("portrait", "portrait"),
+        ("伊蕾娜", "elaina_(majo_no_tabitabi)"),
+        ("魔女之旅", "majo_no_tabitabi"),
+        ("魔女", "witch"),
+        ("飞行", "flying"),
+        ("扫帚", "broom"),
+        ("林", "forest"),
+        ("森林", "forest"),
         ("全身", "full_body"),
         ("半身", "upper_body"),
         ("夜", "night"),
@@ -58,7 +72,8 @@ def query_tags_node(
         ("城市", "city"),
     ]
     for keyword, tag in keyword_tags:
-        if keyword in lowered and tag not in tags:
+        haystack = lowered if keyword.isascii() else raw_request
+        if keyword in haystack and tag not in tags:
             tags.append(tag)
 
     return {
@@ -71,4 +86,3 @@ def query_tags_node(
             )
         ],
     }
-# </agent-node>

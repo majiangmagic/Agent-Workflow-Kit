@@ -6,11 +6,23 @@
   "nodes": {
     "supervisor": {
       "agent": "official_supervisor",
-      "extension": "supervisor"
+      "note": "This workflow uses a lightweight planning node in code; it does not call the official supervisor runtime for delegation yet."
     },
     "requirement_analyzer": {
       "agent": "prompt_requirement_analyzer",
       "agent_package": "prompt_generation/requirement_analyzer"
+    },
+    "character_prompt_generator": {
+      "agent": "character_prompt_generator",
+      "agent_package": "prompt_generation/character_prompt_generator"
+    },
+    "scene_prompt_generator": {
+      "agent": "scene_prompt_generator",
+      "agent_package": "prompt_generation/scene_prompt_generator"
+    },
+    "special_prompt_generator": {
+      "agent": "special_prompt_generator",
+      "agent_package": "prompt_generation/special_prompt_generator"
     },
     "danbooru_query": {
       "agent": "prompt_danbooru_query",
@@ -36,10 +48,27 @@
     },
     {
       "from": "requirement_analyzer",
+      "to": "character_prompt_generator"
+    },
+    {
+      "from": "requirement_analyzer",
+      "to": "scene_prompt_generator"
+    },
+    {
+      "from": "requirement_analyzer",
+      "to": "special_prompt_generator"
+    },
+    {
+      "from": "requirement_analyzer",
       "to": "danbooru_query"
     },
     {
-      "from": "danbooru_query",
+      "from": [
+        "character_prompt_generator",
+        "scene_prompt_generator",
+        "special_prompt_generator",
+        "danbooru_query"
+      ],
       "to": "prompt_writer"
     },
     {

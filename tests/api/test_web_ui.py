@@ -64,7 +64,10 @@ async def test_create_sample_crew_for_prompt_workflow(db_session):
         names = {agent.name for agent in agents}
         assert "official_supervisor" in names
         assert "prompt_requirement_analyzer" in names
+        assert "character_prompt_generator" in names
+        assert "scene_prompt_generator" in names
+        assert "special_prompt_generator" in names
         assert "prompt_format_converter" in names
-        assert len(agents) == 12
+        assert len(agents) == 18
     finally:
         app.dependency_overrides.pop(get_db, None)

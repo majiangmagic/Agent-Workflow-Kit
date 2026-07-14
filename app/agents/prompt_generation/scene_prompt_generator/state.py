@@ -1,13 +1,11 @@
-"""State schema for the prompt_writer agent."""
+"""State schema for the scene_prompt_generator agent."""
 
 from typing import Any, Dict, List, Optional, TypedDict
 
 from langchain_core.messages import BaseMessage
 
 
-class PromptWriterState(TypedDict):
-    """Runtime state for this generated agent."""
-
+class ScenePromptGeneratorState(TypedDict):
     agent_id: str
     agent_name: str
     description: Optional[str]
@@ -17,15 +15,6 @@ class PromptWriterState(TypedDict):
     tools: List[Dict[str, Any]]
     messages: List[BaseMessage]
     user_input: Optional[str]
-
-    # 下面是 DSL 声明的业务状态字段。
     requirements_json: Optional[Dict[str, Any]]
-    danbooru_tags: Optional[List[Any]]
-    character_prompt: Optional[str]
-    character_tags: Optional[List[str]]
     scene_prompt: Optional[str]
     scene_tags: Optional[List[str]]
-    special_prompt: Optional[str]
-    special_tags: Optional[List[str]]
-    draft_prompt: Optional[str]
-    negative_prompt: Optional[str]

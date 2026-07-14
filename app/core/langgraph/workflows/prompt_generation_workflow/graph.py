@@ -2,15 +2,20 @@
 
 from typing import Any, Dict, List
 
-from app.agents.official_supervisor.graph import create_graph as create_official_supervisor_graph
+from langchain_core.messages import AIMessage
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph import END, StateGraph
+
+from app.agents.prompt_generation.character_prompt_generator.graph import create_graph as create_character_prompt_generator_graph
 from app.agents.prompt_generation.danbooru_query.graph import create_graph as create_prompt_generation_danbooru_query_graph
 from app.agents.prompt_generation.format_converter.graph import create_graph as create_prompt_generation_format_converter_graph
 from app.agents.prompt_generation.prompt_reviewer.graph import create_graph as create_prompt_generation_prompt_reviewer_graph
 from app.agents.prompt_generation.prompt_writer.graph import create_graph as create_prompt_generation_prompt_writer_graph
 from app.agents.prompt_generation.requirement_analyzer.graph import create_graph as create_prompt_generation_requirement_analyzer_graph
-from langgraph.graph import END, StateGraph
-from app.core.langgraph.workflows.adapters.supervisor import create_supervisor_extension
+from app.agents.prompt_generation.scene_prompt_generator.graph import create_graph as create_scene_prompt_generator_graph
+from app.agents.prompt_generation.special_prompt_generator.graph import create_graph as create_special_prompt_generator_graph
 from app.core.langgraph.checkpoint import get_checkpointer
+from app.core.langgraph.events import emit_event
 from app.core.langgraph.store import get_store
 from app.core.langgraph.workflows.adapters.agent import (
     AgentNodeExtension,
@@ -34,6 +39,9 @@ def collect_pipeline_context(state: Dict[str, Any]) -> Dict[str, Any]:
     }
     for node_name in [
         "requirement_analyzer",
+        "character_prompt_generator",
+        "scene_prompt_generator",
+        "special_prompt_generator",
         "danbooru_query",
         "prompt_writer",
         "prompt_reviewer",
@@ -43,6 +51,12 @@ def collect_pipeline_context(state: Dict[str, Any]) -> Dict[str, Any]:
         for key in [
             "requirements_json",
             "danbooru_tags",
+            "character_prompt",
+            "character_tags",
+            "scene_prompt",
+            "scene_tags",
+            "special_prompt",
+            "special_tags",
             "tag_notes",
             "draft_prompt",
             "negative_prompt",
@@ -80,6 +94,46 @@ def create_prompt_pipeline_extension(node_name: str) -> AgentNodeExtension:
     )
 
 
+async def supervisor_node(
+    state: Dict[str, Any],
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Record the plan for this deterministic prompt-generation workflow."""
+
+    emit_event(
+        {
+            "object": "workflow.event",
+            "type": "workflow.node.started",
+            "node": "supervisor",
+        }
+    )
+    supervisor_state = {
+        **state["nodes"]["supervisor"],
+        "plan": {
+            "steps": [
+                "analyze requirements",
+                "generate character/scene/special prompt parts in parallel",
+                "map Danbooru tags",
+                "merge, review, and format",
+            ]
+        },
+        "messages": [
+            AIMessage(
+                content="Prompt workflow plan prepared.",
+                name="official_supervisor",
+            )
+        ],
+    }
+    emit_event(
+        {
+            "object": "workflow.event",
+            "type": "workflow.node.completed",
+            "node": "supervisor",
+        }
+    )
+    return {"nodes": {"supervisor": supervisor_state}}
+
+
 def create_prompt_generation_workflow_graph(
     crew_id: str,
     agents: List[Dict[str, Any]],
@@ -87,20 +141,37 @@ def create_prompt_generation_workflow_graph(
     """Create this workflow with native LangGraph primitives."""
 
     workflow = StateGraph(PromptGenerationWorkflowState)
-    workflow.add_node(
-        "supervisor",
-        create_agent_node(
-            "supervisor",
-            create_official_supervisor_graph(),
-            extension=create_supervisor_extension("supervisor"),
-        ),
-    )
+    workflow.add_node("supervisor", supervisor_node)
     workflow.add_node(
         "requirement_analyzer",
         create_agent_node(
             "requirement_analyzer",
             create_prompt_generation_requirement_analyzer_graph(),
             extension=create_prompt_pipeline_extension("requirement_analyzer"),
+        ),
+    )
+    workflow.add_node(
+        "character_prompt_generator",
+        create_agent_node(
+            "character_prompt_generator",
+            create_character_prompt_generator_graph(),
+            extension=create_prompt_pipeline_extension("character_prompt_generator"),
+        ),
+    )
+    workflow.add_node(
+        "scene_prompt_generator",
+        create_agent_node(
+            "scene_prompt_generator",
+            create_scene_prompt_generator_graph(),
+            extension=create_prompt_pipeline_extension("scene_prompt_generator"),
+        ),
+    )
+    workflow.add_node(
+        "special_prompt_generator",
+        create_agent_node(
+            "special_prompt_generator",
+            create_special_prompt_generator_graph(),
+            extension=create_prompt_pipeline_extension("special_prompt_generator"),
         ),
     )
     workflow.add_node(
@@ -136,8 +207,19 @@ def create_prompt_generation_workflow_graph(
         ),
     )
     workflow.add_edge("supervisor", "requirement_analyzer")
+    workflow.add_edge("requirement_analyzer", "character_prompt_generator")
+    workflow.add_edge("requirement_analyzer", "scene_prompt_generator")
+    workflow.add_edge("requirement_analyzer", "special_prompt_generator")
     workflow.add_edge("requirement_analyzer", "danbooru_query")
-    workflow.add_edge("danbooru_query", "prompt_writer")
+    workflow.add_edge(
+        [
+            "character_prompt_generator",
+            "scene_prompt_generator",
+            "special_prompt_generator",
+            "danbooru_query",
+        ],
+        "prompt_writer",
+    )
     workflow.add_edge("prompt_writer", "prompt_reviewer")
     workflow.add_edge("prompt_reviewer", "format_converter")
     workflow.add_edge("format_converter", END)

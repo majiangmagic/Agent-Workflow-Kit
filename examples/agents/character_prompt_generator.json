@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "kind": "agent",
+  "name": "character_prompt_generator",
+  "package": "prompt_generation/character_prompt_generator",
+  "display_name": "Character Prompt Generator",
+  "config": {
+    "prompt": "Generate the character-specific part of an image prompt.",
+    "model": "openai/gpt-4.1",
+    "temperature": 0.2
+  },
+  "state": {
+    "requirements_json": {
+      "type": "dict",
+      "optional": true
+    },
+    "character_prompt": {
+      "type": "string",
+      "optional": true
+    },
+    "character_tags": {
+      "type": "list",
+      "optional": true
+    }
+  },
+  "entrypoint": "generate_character_prompt",
+  "nodes": {
+    "generate_character_prompt": {
+      "handler": "generate_character_prompt_node"
+    }
+  },
+  "edges": [
+    {
+      "from": "generate_character_prompt",
+      "to": "END"
+    }
+  ]
+}

@@ -11,6 +11,7 @@ const els = {
   crewSelect: document.querySelector("#crewSelect"),
   userIdInput: document.querySelector("#userIdInput"),
   createCrewButton: document.querySelector("#createCrewButton"),
+  deleteCrewButton: document.querySelector("#deleteCrewButton"),
   newChatButton: document.querySelector("#newChatButton"),
   refreshButton: document.querySelector("#refreshButton"),
   conversationList: document.querySelector("#conversationList"),
@@ -48,9 +49,7 @@ async function requestJson(path, options = {}) {
     const text = await response.text();
     throw new Error(text || `${response.status} ${response.statusText}`);
   }
-  if (response.status === 204) {
-    return null;
-  }
+  if (response.status === 204) return null;
   return response.json();
 }
 
@@ -82,18 +81,32 @@ function renderConversations() {
   }
 
   for (const conversation of state.conversations) {
+    const row = document.createElement("div");
+    row.className = "conversation-row";
+    if (conversation.id === state.currentConversationId) row.classList.add("active");
+
     const button = document.createElement("button");
     button.type = "button";
     button.className = "conversation-item";
-    if (conversation.id === state.currentConversationId) {
-      button.classList.add("active");
-    }
     button.innerHTML = `
       <span class="conversation-title">${escapeHtml(conversation.title || "未命名对话")}</span>
       <span class="conversation-time">${formatTime(conversation.updated_at || conversation.created_at)}</span>
     `;
     button.addEventListener("click", () => openConversation(conversation.id));
-    els.conversationList.appendChild(button);
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "delete-mini";
+    deleteButton.title = "删除对话";
+    deleteButton.textContent = "×";
+    deleteButton.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await deleteConversation(conversation.id);
+    });
+
+    row.appendChild(button);
+    row.appendChild(deleteButton);
+    els.conversationList.appendChild(row);
   }
 }
 
@@ -158,8 +171,8 @@ function appendMessage(role, content) {
   const item = document.createElement("div");
   item.className = `message ${String(role || "").toLowerCase()}`;
   item.innerHTML = `
-    <span class="message-role">${escapeHtml(roleLabel(role))}</span>
-    ${escapeHtml(content || "")}
+    <div class="message-role">${escapeHtml(roleLabel(role))}</div>
+    <div class="message-bubble">${escapeHtml(content || "")}</div>
   `;
   els.messageList.appendChild(item);
   els.messageList.scrollTop = els.messageList.scrollHeight;
@@ -200,6 +213,7 @@ async function loadWorkflows() {
 }
 
 async function loadCrews() {
+  const selectedId = els.crewSelect.value;
   state.crews = await requestJson("/api/crews/");
   renderSelect(
     els.crewSelect,
@@ -207,8 +221,12 @@ async function loadCrews() {
     (crew) => crew.name,
     (crew) => crew.id,
   );
+  if (selectedId && state.crews.some((crew) => crew.id === selectedId)) {
+    els.crewSelect.value = selectedId;
+  }
   syncWorkflowFromCrew();
   els.sendButton.disabled = state.crews.length === 0;
+  els.deleteCrewButton.disabled = state.crews.length === 0;
   if (!state.crews.length) {
     els.chatTitle.textContent = "先创建示例 Crew";
     els.chatMeta.textContent = "选择工作流后点击左侧按钮";
@@ -219,9 +237,7 @@ function syncWorkflowFromCrew() {
   const crew = selectedCrew();
   if (!crew) return;
   const workflowType = crew.settings?.workflow_type;
-  if (workflowType) {
-    els.workflowSelect.value = workflowType;
-  }
+  if (workflowType) els.workflowSelect.value = workflowType;
 }
 
 async function loadConversations() {
@@ -263,11 +279,7 @@ async function updateCrewWorkflow() {
 async function createConversation(crew, userId, title) {
   return requestJson("/api/conversations/", {
     method: "POST",
-    body: JSON.stringify({
-      user_id: userId,
-      crew_id: crew.id,
-      title,
-    }),
+    body: JSON.stringify({ user_id: userId, crew_id: crew.id, title }),
   });
 }
 
@@ -337,6 +349,29 @@ async function createSampleCrew() {
   }
 }
 
+async function deleteSelectedCrew() {
+  const crew = selectedCrew();
+  if (!crew) return;
+  if (!confirm(`删除 Crew：${crew.name}？`)) return;
+  setStatus("删除 Crew");
+  await requestJson(`/api/crews/${crew.id}`, { method: "DELETE" });
+  state.currentConversationId = null;
+  await loadCrews();
+  await loadConversations();
+  resetChat();
+  setStatus("就绪");
+}
+
+async function deleteConversation(conversationId) {
+  await requestJson(`/api/conversations/${conversationId}`, { method: "DELETE" });
+  if (state.currentConversationId === conversationId) {
+    state.currentConversationId = null;
+    renderMessages([]);
+    clearProgress();
+  }
+  await loadConversations();
+}
+
 function resetChat() {
   state.currentConversationId = null;
   els.chatTitle.textContent = selectedWorkflowName() || "新对话";
@@ -360,9 +395,7 @@ async function sendMessage(message) {
     setStatus("运行中");
 
     let conversationId = state.currentConversationId;
-    if (state.currentConversationId) {
-      conversationId = state.currentConversationId;
-    } else {
+    if (!conversationId) {
       await updateCrewWorkflow();
       const conversation = await createConversation(crew, userId, message.slice(0, 40));
       conversationId = conversation.id;
@@ -405,6 +438,7 @@ els.crewSelect.addEventListener("change", async () => {
 els.workflowSelect.addEventListener("change", resetChat);
 els.userIdInput.addEventListener("change", loadConversations);
 els.createCrewButton.addEventListener("click", createSampleCrew);
+els.deleteCrewButton.addEventListener("click", deleteSelectedCrew);
 els.refreshButton.addEventListener("click", loadConversations);
 els.newChatButton.addEventListener("click", resetChat);
 els.clearProgressButton.addEventListener("click", clearProgress);
