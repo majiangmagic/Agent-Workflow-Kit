@@ -188,57 +188,6 @@ state["temperature"]
 
 这意味着 DSL 是结构源头，业务逻辑写在节点代码块里。
 
-## 实战样例：Baseball Analysis
-
-仓库内置了一个参考 [aws-samples/langgraph-multi-agent](https://github.com/aws-samples/langgraph-multi-agent) 思路改写的实战样例。
-
-参考项目的核心模式是：
-
-```text
-orchestrate graph: plan / retrieve / revise / memorize
-execute graph: generate code / execute code / summarize
-```
-
-本项目没有照搬它的后端和 notebook，也没有引入 `pybaseball` 运行依赖，而是把它压缩成一个适合当前模板的 DSL 样例：
-
-```text
-baseball_analysis_agent
-  plan
-  retrieve
-  generate_code
-  execute_code
-  summarize
-```
-
-相关文件：
-
-```text
-examples/agents/baseball_analysis_agent.json
-examples/workflows/baseball_analysis_workflow.json
-app/agents/baseball_analysis_agent/
-app/core/langgraph/workflows/baseball_analysis_workflow/
-```
-
-重新生成骨架：
-
-```bash
-python scripts/generate_agent.py examples/agents/baseball_analysis_agent.json
-python scripts/generate_workflow.py examples/workflows/baseball_analysis_workflow.json
-```
-
-验证样例：
-
-```bash
-pytest tests/agents/test_baseball_analysis_agent.py
-```
-
-当前样例使用确定性内置数据回答：
-
-```text
-How many home runs did Derek Jeter hit in 2010?
--> Derek Jeter hit 10 home runs in 2010.
-```
-
 ## 短期记忆
 
 短期记忆使用官方 LangGraph checkpoint，并挂在 workflow 层，而不是某个单独 Agent 私有层。
