@@ -150,8 +150,21 @@ async def query_one_danbooru_term(
     return filtered[:1]
 
 
-async def query_danbooru_tags(terms: Iterable[str], limit: int = 20) -> List[str]:
-    """Query Danbooru and return existing tag names sorted by post count."""
+def clean_danbooru_record(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep only Danbooru-provided tag fields used downstream."""
+
+    return {
+        "name": str(item.get("name") or ""),
+        "category": int(item.get("category") or 0),
+        "post_count": int(item.get("post_count") or 0),
+    }
+
+
+async def query_danbooru_tag_records(
+    terms: Iterable[str],
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    """Query Danbooru and return existing tag records sorted by post count."""
 
     search_terms = unique_nonempty(terms, limit=8)
     async with httpx.AsyncClient(timeout=5.0) as client:
@@ -171,13 +184,13 @@ async def query_danbooru_tags(terms: Iterable[str], limit: int = 20) -> List[str
         key=lambda item: int(item.get("post_count") or 0),
         reverse=True,
     )
-    found: list[str] = []
+    found: list[Dict[str, Any]] = []
     seen = set()
     for item in tag_items:
         name = str(item.get("name") or "")
         if not name or name in seen:
             continue
-        found.append(name)
+        found.append(clean_danbooru_record(item))
         seen.add(name)
         if len(found) >= limit:
             break
@@ -196,33 +209,33 @@ async def query_tags_node(
     model_terms = await generate_danbooru_search_terms(raw_request, state)
     search_terms = unique_nonempty([*seed_terms, *model_terms])
 
-    tags = []
+    tag_records: list[Dict[str, Any]] = []
     error = None
     try:
-        tags = await query_danbooru_tags(search_terms)
+        tag_records = await query_danbooru_tag_records(search_terms)
     except Exception as exc:
         error = str(exc)
 
-    if not tags:
-        tags = ["masterpiece", "best_quality"]
+    tags = [record["name"] for record in tag_records]
 
     notes = {
         "source": "danbooru_api",
         "search_terms": search_terms,
-        "fallback_used": tags == ["masterpiece", "best_quality"],
+        "miss": not tags,
     }
     if error:
         notes["error"] = error
 
     return {
         "danbooru_tags": tags,
+        "danbooru_tag_records": tag_records,
         "tag_notes": json.dumps(notes, ensure_ascii=False),
         "messages": [
             AIMessage(
                 content=(
                     f"Danbooru query returned {len(tags)} tags."
-                    if not notes["fallback_used"]
-                    else "Danbooru query had no hit; using generic quality tags."
+                    if tags
+                    else "Danbooru query returned no tags."
                 ),
                 name="prompt_danbooru_query",
             )

@@ -16,5 +16,6 @@ class ScenePromptGeneratorState(TypedDict):
     messages: List[BaseMessage]
     user_input: Optional[str]
     requirements_json: Optional[Dict[str, Any]]
+    danbooru_tag_records: Optional[List[Dict[str, Any]]]
     scene_prompt: Optional[str]
     scene_tags: Optional[List[str]]

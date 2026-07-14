@@ -51,6 +51,7 @@ def collect_pipeline_context(state: Dict[str, Any]) -> Dict[str, Any]:
         for key in [
             "requirements_json",
             "danbooru_tags",
+            "danbooru_tag_records",
             "character_prompt",
             "character_tags",
             "scene_prompt",
@@ -207,16 +208,15 @@ def create_prompt_generation_workflow_graph(
         ),
     )
     workflow.add_edge("supervisor", "requirement_analyzer")
-    workflow.add_edge("requirement_analyzer", "character_prompt_generator")
-    workflow.add_edge("requirement_analyzer", "scene_prompt_generator")
-    workflow.add_edge("requirement_analyzer", "special_prompt_generator")
     workflow.add_edge("requirement_analyzer", "danbooru_query")
+    workflow.add_edge("danbooru_query", "character_prompt_generator")
+    workflow.add_edge("danbooru_query", "scene_prompt_generator")
+    workflow.add_edge("danbooru_query", "special_prompt_generator")
     workflow.add_edge(
         [
             "character_prompt_generator",
             "scene_prompt_generator",
             "special_prompt_generator",
-            "danbooru_query",
         ],
         "prompt_writer",
     )

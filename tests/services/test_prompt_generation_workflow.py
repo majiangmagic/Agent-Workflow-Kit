@@ -98,14 +98,14 @@ def prompt_generation_agents():
     ]
 
 
-def patch_danbooru(monkeypatch, tags):
+def patch_danbooru(monkeypatch, records):
     """Keep workflow tests offline while still testing the Danbooru path."""
 
     async def fake_generate_terms(raw_request, state):
-        return ["elaina", "majo no tabitabi", "broom", "forest", "cyberpunk"]
+        return ["candidate-from-llm"]
 
-    async def fake_query_tags(terms, limit=20):
-        return tags
+    async def fake_query_records(terms, limit=20):
+        return records
 
     monkeypatch.setattr(
         "app.agents.prompt_generation.danbooru_query.nodes."
@@ -113,23 +113,29 @@ def patch_danbooru(monkeypatch, tags):
         fake_generate_terms,
     )
     monkeypatch.setattr(
-        "app.agents.prompt_generation.danbooru_query.nodes.query_danbooru_tags",
-        fake_query_tags,
+        "app.agents.prompt_generation.danbooru_query.nodes."
+        "query_danbooru_tag_records",
+        fake_query_records,
     )
 
 
 @pytest.mark.asyncio
-async def test_prompt_generation_workflow_runs_grouped_agents(monkeypatch):
-    """The prompt workflow should pass upstream outputs through grouped agents."""
+async def test_prompt_generation_workflow_uses_only_danbooru_records(monkeypatch):
+    """The prompt workflow should pass Danbooru records through grouped agents."""
 
-    patch_danbooru(monkeypatch, ["cyberpunk", "neon_lights", "cityscape"])
-    user_input = "Create a flux cyberpunk portrait of a girl in a rainy night city"
+    patch_danbooru(
+        monkeypatch,
+        [
+            {"name": "returned_character_tag", "category": 4, "post_count": 100},
+            {"name": "returned_general_tag", "category": 0, "post_count": 90},
+        ],
+    )
     initial_state = build_initial_state(
         crew_id="crew-1",
         agents=prompt_generation_agents(),
         user_id="user-1",
         conversation_id="conversation-1",
-        user_input=user_input,
+        user_input="user supplied image request",
     )
     workflow = create_prompt_generation_workflow_graph(
         crew_id="crew-1",
@@ -142,34 +148,34 @@ async def test_prompt_generation_workflow_runs_grouped_agents(monkeypatch):
     )
 
     nodes = result["nodes"]
-    assert nodes["requirement_analyzer"]["requirements_json"]["target_model"] == "flux"
-    assert nodes["character_prompt_generator"]["character_prompt"]
-    assert nodes["scene_prompt_generator"]["scene_prompt"]
-    assert nodes["special_prompt_generator"]["special_prompt"]
-    assert "cyberpunk" in nodes["danbooru_query"]["danbooru_tags"]
-    assert "neon_lights" in nodes["prompt_writer"]["draft_prompt"]
+    assert nodes["danbooru_query"]["danbooru_tags"] == [
+        "returned_character_tag",
+        "returned_general_tag",
+    ]
+    assert nodes["character_prompt_generator"]["character_tags"] == [
+        "returned_character_tag"
+    ]
+    assert nodes["scene_prompt_generator"]["scene_tags"] == ["returned_general_tag"]
+    assert nodes["special_prompt_generator"]["special_tags"] == []
+    assert nodes["prompt_writer"]["draft_prompt"] == (
+        "returned_character_tag, returned_general_tag"
+    )
     assert nodes["prompt_reviewer"]["review_result"]["approved"] is True
-    assert nodes["format_converter"]["final_output"]["target_model"] == "flux"
-    assert "Create an image of" in nodes["format_converter"]["formatted_prompt"]
 
 
 @pytest.mark.asyncio
-async def test_prompt_generation_workflow_uses_danbooru_returned_elaina_tags(
+async def test_prompt_generation_workflow_does_not_fallback_to_preset_tags(
     monkeypatch,
 ):
-    """Elaina tags should come from the Danbooru query node, not local mappings."""
+    """No Danbooru hit means no prompt tags, not local default quality tags."""
 
-    patch_danbooru(
-        monkeypatch,
-        ["elaina_(majo_no_tabitabi)", "majo_no_tabitabi", "broom", "forest"],
-    )
-    user_input = "\u4f0a\u857e\u5a1c\u5728\u6797\u95f4\u9a91\u7740\u626b\u5e1a\u98de\u884c"
+    patch_danbooru(monkeypatch, [])
     initial_state = build_initial_state(
         crew_id="crew-1",
         agents=prompt_generation_agents(),
         user_id="user-1",
-        conversation_id="conversation-elaina",
-        user_input=user_input,
+        conversation_id="conversation-empty",
+        user_input="request with no external tag hits",
     )
     workflow = create_prompt_generation_workflow_graph(
         crew_id="crew-1",
@@ -178,15 +184,11 @@ async def test_prompt_generation_workflow_uses_danbooru_returned_elaina_tags(
 
     result = await workflow.ainvoke(
         initial_state,
-        config={"configurable": {"thread_id": "prompt-generation-elaina-test"}},
+        config={"configurable": {"thread_id": "prompt-generation-empty-test"}},
     )
 
     nodes = result["nodes"]
-    requirements = nodes["requirement_analyzer"]["requirements_json"]
-    tags = nodes["danbooru_query"]["danbooru_tags"]
-    final_prompt = nodes["format_converter"]["formatted_prompt"]
-    assert requirements["characters"] == []
-    assert "elaina_(majo_no_tabitabi)" in tags
-    assert "majo_no_tabitabi" in final_prompt
-    assert "broom" in final_prompt
-    assert "forest" in final_prompt
+    assert nodes["danbooru_query"]["danbooru_tags"] == []
+    assert nodes["prompt_writer"]["draft_prompt"] == ""
+    assert nodes["prompt_reviewer"]["review_result"]["approved"] is False
+    assert "no_danbooru_tags_found" in nodes["prompt_reviewer"]["review_result"]["issues"]

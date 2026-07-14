@@ -29,12 +29,8 @@ def write_prompt_node(
     state: PromptWriterState,
     config: RunnableConfig | None = None,
 ) -> Dict[str, Any]:
-    """Write the first prompt draft from requirements and generated parts."""
+    """Write a draft only from Danbooru-backed prompt parts."""
 
-    requirements = state.get("requirements_json") or {}
-    raw_request = str(requirements.get("raw_request") or state.get("user_input") or "")
-    subject = str(requirements.get("subject") or raw_request or "image subject")
-    quality = ", ".join(requirements.get("quality") or ["high detail"])
     generated_parts = [
         state.get("character_prompt"),
         state.get("scene_prompt"),
@@ -43,24 +39,15 @@ def write_prompt_node(
     prompt_terms: list[str] = []
     for part in generated_parts:
         append_unique(prompt_terms, part)
-    if not prompt_terms:
-        append_unique(prompt_terms, subject)
     append_unique(prompt_terms, ", ".join(state.get("danbooru_tags") or []))
-    append_unique(prompt_terms, quality)
-    append_unique(prompt_terms, "strong composition")
 
     draft = ", ".join(prompt_terms)
-    negative = ", ".join(
-        (requirements.get("constraints") or {}).get(
-            "avoid", ["low quality", "blurry", "bad anatomy"]
-        )
-    )
     return {
         "draft_prompt": draft,
-        "negative_prompt": negative,
+        "negative_prompt": "",
         "messages": [
             AIMessage(
-                content="Draft prompt prepared.",
+                content="Draft prompt prepared from Danbooru-backed tags.",
                 name="prompt_writer",
             )
         ],

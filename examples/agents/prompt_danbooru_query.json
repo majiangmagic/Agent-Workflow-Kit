@@ -18,6 +18,10 @@
       "type": "list",
       "optional": true
     },
+    "danbooru_tag_records": {
+      "type": "list",
+      "optional": true
+    },
     "tag_notes": {
       "type": "string",
       "optional": true

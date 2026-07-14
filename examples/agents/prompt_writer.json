@@ -18,6 +18,10 @@
       "type": "list",
       "optional": true
     },
+    "danbooru_tag_records": {
+      "type": "list",
+      "optional": true
+    },
     "character_prompt": {
       "type": "string",
       "optional": true

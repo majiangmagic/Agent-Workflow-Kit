@@ -5,40 +5,40 @@ from typing import Any, Dict
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 
-from app.agents.prompt_generation.character_prompt_generator.state import CharacterPromptGeneratorState
+from app.agents.prompt_generation.character_prompt_generator.state import (
+    CharacterPromptGeneratorState,
+)
+
+DANBOORU_CATEGORY_CHARACTER = 4
+
+
+def tag_names_by_category(records: list[dict[str, Any]], category: int) -> list[str]:
+    names = []
+    for record in records:
+        record_category = record.get("category")
+        if record_category is None or int(record_category) != category:
+            continue
+        name = str(record.get("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
 
 
 def generate_character_prompt_node(
     state: CharacterPromptGeneratorState,
     config: RunnableConfig | None = None,
 ) -> Dict[str, Any]:
-    """Generate the character-specific prompt part."""
+    """Use only Danbooru character-category tags."""
 
-    requirements = state.get("requirements_json") or {}
-    characters = requirements.get("characters") or []
-    tags: list[str] = []
-    names: list[str] = []
-    for character in characters:
-        if not isinstance(character, dict):
-            continue
-        name = str(character.get("name") or "").strip()
-        if name:
-            names.append(name)
-        for tag in character.get("tags") or []:
-            if tag not in tags:
-                tags.append(str(tag))
-
-    if not names:
-        raw = str(requirements.get("raw_request") or state.get("user_input") or "")
-        names = [raw] if raw else ["main subject"]
-
-    prompt = ", ".join([*names, *tags])
+    records = state.get("danbooru_tag_records") or []
+    tags = tag_names_by_category(records, DANBOORU_CATEGORY_CHARACTER)
+    prompt = ", ".join(tags)
     return {
         "character_prompt": prompt,
         "character_tags": tags,
         "messages": [
             AIMessage(
-                content=f"Character prompt prepared: {prompt}",
+                content=f"Character tags from Danbooru: {len(tags)}.",
                 name="character_prompt_generator",
             )
         ],

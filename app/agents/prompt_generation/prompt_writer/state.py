@@ -21,6 +21,7 @@ class PromptWriterState(TypedDict):
     # 下面是 DSL 声明的业务状态字段。
     requirements_json: Optional[Dict[str, Any]]
     danbooru_tags: Optional[List[Any]]
+    danbooru_tag_records: Optional[List[Dict[str, Any]]]
     character_prompt: Optional[str]
     character_tags: Optional[List[str]]
     scene_prompt: Optional[str]

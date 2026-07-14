@@ -16,5 +16,6 @@ class CharacterPromptGeneratorState(TypedDict):
     messages: List[BaseMessage]
     user_input: Optional[str]
     requirements_json: Optional[Dict[str, Any]]
+    danbooru_tag_records: Optional[List[Dict[str, Any]]]
     character_prompt: Optional[str]
     character_tags: Optional[List[str]]

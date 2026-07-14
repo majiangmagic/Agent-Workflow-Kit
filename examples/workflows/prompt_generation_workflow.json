@@ -48,26 +48,25 @@
     },
     {
       "from": "requirement_analyzer",
+      "to": "danbooru_query"
+    },
+    {
+      "from": "danbooru_query",
       "to": "character_prompt_generator"
     },
     {
-      "from": "requirement_analyzer",
+      "from": "danbooru_query",
       "to": "scene_prompt_generator"
     },
     {
-      "from": "requirement_analyzer",
+      "from": "danbooru_query",
       "to": "special_prompt_generator"
-    },
-    {
-      "from": "requirement_analyzer",
-      "to": "danbooru_query"
     },
     {
       "from": [
         "character_prompt_generator",
         "scene_prompt_generator",
-        "special_prompt_generator",
-        "danbooru_query"
+        "special_prompt_generator"
       ],
       "to": "prompt_writer"
     },
