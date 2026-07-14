@@ -188,6 +188,68 @@ def parse_edges(raw_edges: Any) -> List[WorkflowEdgeDsl]:
     return edges
 
 
+def normalize_ui(raw_ui: Any) -> Dict[str, Any]:
+    """Validate generic workflow controls while preserving other UI metadata."""
+
+    if raw_ui in (None, {}):
+        return {}
+    if not isinstance(raw_ui, dict):
+        raise ValueError("workflow.ui must be a map")
+    ui = dict(raw_ui)
+    controls = ui.get("controls")
+    if controls is None:
+        return ui
+    if not isinstance(controls, list):
+        raise ValueError("workflow.ui.controls must be a list")
+
+    normalized_controls = []
+    seen_keys = set()
+    for raw_control in controls:
+        if not isinstance(raw_control, dict):
+            raise ValueError("each workflow UI control must be a map")
+        control = dict(raw_control)
+        key = snake_case(str(control.get("key") or ""))
+        if key in seen_keys:
+            raise ValueError(f"duplicate workflow UI control key '{key}'")
+        control_type = str(control.get("type") or "select").strip().lower()
+        if control_type not in {"select", "segmented"}:
+            raise ValueError(
+                f"workflow UI control '{key}' has unsupported type '{control_type}'"
+            )
+        raw_options = control.get("options")
+        if not isinstance(raw_options, list) or not raw_options:
+            raise ValueError(f"workflow UI control '{key}' requires options")
+        options = []
+        option_values = set()
+        for raw_option in raw_options:
+            if not isinstance(raw_option, dict):
+                raise ValueError(f"workflow UI control '{key}' options must be maps")
+            value = str(raw_option.get("value") or "").strip()
+            if not value or value in option_values:
+                raise ValueError(
+                    f"workflow UI control '{key}' has an empty or duplicate option"
+                )
+            option_values.add(value)
+            options.append({**raw_option, "value": value})
+        default = str(control.get("default") or options[0]["value"])
+        if default not in option_values:
+            raise ValueError(
+                f"workflow UI control '{key}' default must match an option"
+            )
+        seen_keys.add(key)
+        normalized_controls.append(
+            {
+                **control,
+                "key": key,
+                "type": control_type,
+                "default": default,
+                "options": options,
+            }
+        )
+    ui["controls"] = normalized_controls
+    return ui
+
+
 def parse_workflow_dsl(data: Dict[str, Any]) -> WorkflowDsl:
     """Validate and normalize workflow DSL."""
 
@@ -213,9 +275,7 @@ def parse_workflow_dsl(data: Dict[str, Any]) -> WorkflowDsl:
         if edge.target != "END" and edge.target not in node_names:
             raise ValueError(f"edge target '{edge.target}' is not defined in nodes")
 
-    ui = data.get("ui") or {}
-    if not isinstance(ui, dict):
-        raise ValueError("workflow.ui must be a map")
+    ui = normalize_ui(data.get("ui"))
 
     return WorkflowDsl(
         name=name,
@@ -448,6 +508,7 @@ def build_initial_state(
     conversation_id: str = "",
     messages: Optional[List[BaseMessage]] = None,
     user_input: Optional[str] = None,
+    workflow_inputs: Optional[Dict[str, Any]] = None,
 ) -> WorkflowState:
     """Build initial state for this workflow definition."""
 
@@ -460,6 +521,7 @@ def build_initial_state(
         conversation_id=conversation_id,
         messages=messages,
         user_input=user_input,
+        workflow_inputs=workflow_inputs,
     )
 '''
 

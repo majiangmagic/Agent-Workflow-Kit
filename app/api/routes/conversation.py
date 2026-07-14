@@ -168,6 +168,7 @@ async def build_workflow_for_conversation(
     db: AsyncSession,
     conversation,
     user_message,
+    workflow_inputs: Optional[Dict[str, Any]] = None,
 ):
     """Create the configured workflow and initial state for a conversation turn."""
 
@@ -198,6 +199,7 @@ async def build_workflow_for_conversation(
             user_id=conversation.user_id,
             user_input=user_message.content,
             messages=history_messages,
+            workflow_inputs=workflow_inputs,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -212,6 +214,7 @@ async def run_chat_turn(
     db: AsyncSession,
     conversation,
     message: str,
+    workflow_inputs: Optional[Dict[str, Any]] = None,
 ) -> ChatResponse:
     """Persist a user message, run the workflow, and persist the assistant reply."""
 
@@ -221,10 +224,11 @@ async def run_chat_turn(
         role=MessageRole.USER,
         content=message,
         status=MessageStatus.COMPLETED,
+        metadata={"workflow_inputs": workflow_inputs} if workflow_inputs else {},
     )
 
     workflow, initial_state, supervisor = await build_workflow_for_conversation(
-        db, conversation, user_message
+        db, conversation, user_message, workflow_inputs
     )
 
     try:
@@ -512,7 +516,9 @@ async def chat(
             detail=f"Conversation with ID {conversation_id} not found"
         )
 
-    return await run_chat_turn(db, conversation, chat_request.message)
+    return await run_chat_turn(
+        db, conversation, chat_request.message, chat_request.workflow_inputs
+    )
 
 
 @chat_router.post("/chat", response_model=UnifiedChatResponse)
@@ -523,7 +529,9 @@ async def unified_chat(
     """Create a conversation when needed, then send one chat message."""
 
     conversation = await get_or_create_chat_conversation(db, chat_request)
-    chat_response = await run_chat_turn(db, conversation, chat_request.message)
+    chat_response = await run_chat_turn(
+        db, conversation, chat_request.message, chat_request.workflow_inputs
+    )
     return UnifiedChatResponse(
         conversation_id=conversation.id,
         message_id=chat_response.message_id,
@@ -553,10 +561,13 @@ async def chat_stream(
         role=MessageRole.USER,
         content=chat_request.message,
         status=MessageStatus.COMPLETED,
+        metadata={"workflow_inputs": chat_request.workflow_inputs}
+        if chat_request.workflow_inputs
+        else {},
     )
 
     workflow, initial_state, supervisor = await build_workflow_for_conversation(
-        db, conversation, user_message
+        db, conversation, user_message, chat_request.workflow_inputs
     )
     
     # Create a placeholder for assistant message

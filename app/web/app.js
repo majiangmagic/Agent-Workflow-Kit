@@ -3,12 +3,13 @@ const state = {
   crews: [],
   conversations: [],
   currentConversationId: null,
+  workflowInputs: {},
 };
 
 const els = Object.fromEntries([
   "status", "workflowSelect", "crewSelect", "userIdInput", "createCrewButton",
   "deleteCrewButton", "newChatButton", "refreshButton", "conversationList",
-  "chatTitle", "chatMeta", "deleteLastTurnButton", "deleteConversationButton", "modelControl", "targetModelSelect",
+  "chatTitle", "chatMeta", "deleteLastTurnButton", "deleteConversationButton", "workflowControls",
   "clearProgressButton", "progressList", "messageList", "chatForm",
   "messageInput", "inputHint", "sendButton",
 ].map((id) => [id, document.querySelector(`#${id}`)]));
@@ -173,15 +174,19 @@ function renderWorkflowPipeline() {
 function applyWorkflowUi() {
   const workflow = selectedWorkflow();
   const ui = workflow?.ui || {};
-  const models = Array.isArray(ui.target_models) ? ui.target_models : [];
-  els.modelControl.hidden = models.length === 0;
-  renderSelect(
-    els.targetModelSelect,
-    models,
-    (model) => model.label || model.value,
-    (model) => model.value,
+  const legacyModels = Array.isArray(ui.target_models) ? ui.target_models : [];
+  const controls = Array.isArray(ui.controls) ? ui.controls : (
+    legacyModels.length
+      ? [{
+          key: "target_model",
+          label: "目标模型",
+          type: "select",
+          options: legacyModels,
+          default: ui.default_target_model,
+        }]
+      : []
   );
-  if (ui.default_target_model) els.targetModelSelect.value = ui.default_target_model;
+  renderWorkflowControls(controls);
   els.messageInput.placeholder = ui.input_placeholder || "输入要交给工作流处理的任务……";
   els.inputHint.textContent = ui.input_hint || "消息将按当前工作流执行";
   if (!state.currentConversationId) {
@@ -189,6 +194,63 @@ function applyWorkflowUi() {
     els.chatMeta.textContent = ui.description || selectedCrew()?.name || "选择 Crew 后开始";
   }
   renderWorkflowPipeline();
+}
+
+function renderWorkflowControls(controls) {
+  els.workflowControls.replaceChildren();
+  const nextInputs = {};
+  controls.forEach((control) => {
+    const key = String(control.key || "").trim();
+    const options = Array.isArray(control.options) ? control.options : [];
+    if (!key || !options.length) return;
+    const values = options.map((option) => String(option.value));
+    const previous = state.workflowInputs[key];
+    const defaultValue = String(control.default ?? options[0].value);
+    const selected = values.includes(String(previous)) ? String(previous) : defaultValue;
+    nextInputs[key] = selected;
+
+    const wrapper = document.createElement("label");
+    wrapper.className = "workflow-control";
+    const title = document.createElement("span");
+    title.textContent = control.label || key.replaceAll("_", " ");
+    wrapper.append(title);
+
+    if (control.type === "segmented") {
+      const segmented = document.createElement("div");
+      segmented.className = "segmented-control";
+      options.forEach((option) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = option.label || option.value;
+        button.dataset.value = String(option.value);
+        button.classList.toggle("active", button.dataset.value === selected);
+        button.addEventListener("click", () => {
+          state.workflowInputs[key] = button.dataset.value;
+          segmented.querySelectorAll("button").forEach((item) => {
+            item.classList.toggle("active", item === button);
+          });
+        });
+        segmented.append(button);
+      });
+      wrapper.append(segmented);
+    } else {
+      const select = document.createElement("select");
+      renderSelect(
+        select,
+        options,
+        (option) => option.label || option.value,
+        (option) => option.value,
+      );
+      select.value = selected;
+      select.addEventListener("change", () => {
+        state.workflowInputs[key] = select.value;
+      });
+      wrapper.append(select);
+    }
+    els.workflowControls.append(wrapper);
+  });
+  state.workflowInputs = nextInputs;
+  els.workflowControls.hidden = els.workflowControls.childElementCount === 0;
 }
 
 function appendProgress(event) {
@@ -274,11 +336,11 @@ async function updateCrewWorkflow() {
   state.crews = state.crews.map((item) => item.id === updated.id ? updated : item);
 }
 
-async function streamChat(conversationId, message) {
+async function streamChat(conversationId, message, workflowInputs = {}) {
   const response = await fetch(`/api/conversations/${conversationId}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, workflow_inputs: workflowInputs }),
   });
   if (!response.ok || !response.body) throw new Error((await response.text()) || response.statusText);
   const reader = response.body.getReader();
@@ -383,11 +445,11 @@ async function sendMessage(message) {
       els.chatMeta.textContent = conversationId;
       renderConversations();
     }
-    const model = els.modelControl.hidden ? "" : els.targetModelSelect.value;
-    const workflowMessage = !model || model === "auto"
-      ? message
-      : `目标模型：${model}\n${message}`;
-    const result = await streamChat(conversationId, workflowMessage);
+    const result = await streamChat(
+      conversationId,
+      message,
+      { ...state.workflowInputs },
+    );
     appendMessage("assistant", result || "工作流已完成，但没有返回提示词。");
     await loadConversations();
     setStatus("已完成");

@@ -17,6 +17,7 @@ class AdditionalPromptGeneratorState(TypedDict):
     tools: List[Dict[str, Any]]
     messages: List[BaseMessage]
     user_input: Optional[str]
+    workflow_inputs: Dict[str, Any]
 
     # 下面是 DSL 声明的业务状态字段。
     requirements_json: Optional[Dict[str, Any]]

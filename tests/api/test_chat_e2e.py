@@ -167,7 +167,10 @@ async def test_chat_stream_includes_workflow_node_events(db_session):
             )
             conversation_id = conversation_response.json()["id"]
 
+            captured_workflow_inputs = {}
+
             def fake_official_supervisor_invoke(state, config=None):
+                captured_workflow_inputs.update(state.get("workflow_inputs") or {})
                 return {
                     **state,
                     "messages": state["messages"]
@@ -182,10 +185,20 @@ async def test_chat_stream_includes_workflow_node_events(db_session):
             ):
                 response = await client.post(
                     f"/api/conversations/{conversation_id}/chat/stream",
-                    json={"message": "Hello through stream"},
+                    json={
+                        "message": "Hello through stream",
+                        "workflow_inputs": {
+                            "prompt_strategy": "faithful",
+                            "target_model": "nai_v4",
+                        },
+                    },
                 )
 
             assert response.status_code == 200
+            assert captured_workflow_inputs == {
+                "prompt_strategy": "faithful",
+                "target_model": "nai_v4",
+            }
             events = []
             for block in response.text.strip().split("\n\n"):
                 if not block.startswith("data: "):

@@ -104,6 +104,7 @@ class ChatRequest(BaseModel):
     """Schema for a chat request"""
     message: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    workflow_inputs: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ChatResponse(BaseModel):
@@ -121,6 +122,7 @@ class UnifiedChatRequest(BaseModel):
     crew_id: Optional[UUID] = None
     title: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    workflow_inputs: Dict[str, Any] = Field(default_factory=dict)
 
 
 class UnifiedChatResponse(ChatResponse):

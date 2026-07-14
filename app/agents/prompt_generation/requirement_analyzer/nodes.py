@@ -151,6 +151,12 @@ async def analyze_node(
     from app.services.ai_provider import AIProvider, ai_provider
 
     user_input = str(state.get("user_input") or "").strip()
+    workflow_inputs = dict(state.get("workflow_inputs") or {})
+    prompt_strategy = str(
+        workflow_inputs.get("prompt_strategy") or "expressive"
+    ).strip().lower()
+    if prompt_strategy not in {"expressive", "faithful"}:
+        prompt_strategy = "expressive"
     semantic_user_input = strip_target_model_directive(user_input)
     editor_succeeded = bool(state.get("editor_succeeded"))
     resolved_by_editor = str(state.get("resolved_user_request") or "").strip()
@@ -162,7 +168,10 @@ async def analyze_node(
         if editor_succeeded and resolved_by_editor
         else semantic_user_input
     )
-    detected_model = detect_target_model(user_input)
+    selected_model = str(workflow_inputs.get("target_model") or "").strip()
+    detected_model = detect_target_model(
+        user_input if not selected_model or selected_model == "auto" else selected_model
+    )
     requirements: Dict[str, Any] = {
         "latest_user_input": semantic_user_input,
         "raw_request": request_to_analyze,
@@ -188,6 +197,7 @@ async def analyze_node(
         ),
         "negative": [],
         "target_model": detected_model,
+        "prompt_strategy": prompt_strategy,
     }
     agent_prompt = state.get("system_prompt") or (
         "Analyze an image generation request. Return one JSON object with keys: "
@@ -217,6 +227,16 @@ async def analyze_node(
         "using 'the character' rather than respelling the character name. "
         "Do not return or rewrite resolved_request."
     )
+    if prompt_strategy == "faithful":
+        system_prompt += (
+            "\n\nFaithful strategy is active. Translate only visual facts explicitly "
+            "present in the authoritative resolved request or request contract. "
+            "Keep positive_phrases concise and limited to required elements, explicit "
+            "positive constraints, and spatial relations that cannot be represented "
+            "reliably as atomic tags. Do not add plausible expressions, body reactions, "
+            "textures, lighting, atmosphere, style, camera choices, or pose embellishments "
+            "unless the user explicitly requested them."
+        )
     analysis_input = (
         "Authoritative request contract:\n"
         f"{json.dumps(request_contract, ensure_ascii=False)}\n\n"
@@ -293,8 +313,7 @@ async def analyze_node(
     requirements["raw_request"] = request_to_analyze
     requirements["resolved_request"] = request_to_analyze
     requirements["request_contract"] = request_contract
-    explicit_model = detect_target_model(user_input)
-    requirements["target_model"] = explicit_model or "nai_v4"
+    requirements["target_model"] = detected_model
     return {
         "requirements_json": requirements,
         "messages": [

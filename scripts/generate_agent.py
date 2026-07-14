@@ -355,7 +355,8 @@ class {agent.state_class}(TypedDict):
     temperature: float
     tools: List[Dict[str, Any]]
     messages: List[BaseMessage]
-    user_input: Optional[str]{extra_fields}
+    user_input: Optional[str]
+    workflow_inputs: Dict[str, Any]{extra_fields}
 '''
 
 

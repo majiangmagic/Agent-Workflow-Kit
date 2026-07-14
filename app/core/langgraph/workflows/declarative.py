@@ -41,6 +41,7 @@ class WorkflowState(TypedDict):
     crew_id: str
     conversation_id: str
     user_input: Optional[str]
+    workflow_inputs: Dict[str, Any]
 
 
 def build_agent_runtime_state(
@@ -48,6 +49,7 @@ def build_agent_runtime_state(
     agent_config: Dict[str, Any],
     user_input: Optional[str],
     messages: Optional[List[BaseMessage]] = None,
+    workflow_inputs: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Project a DB agent config into a node-local runtime state."""
 
@@ -62,6 +64,7 @@ def build_agent_runtime_state(
         "tools": agent_config.get("tools", []),
         "messages": messages or [],
         "user_input": user_input,
+        "workflow_inputs": dict(workflow_inputs or {}),
         "plan": None,
         "action": None,
         "agents": {},
@@ -80,6 +83,7 @@ def build_workflow_initial_state(
     conversation_id: str = "",
     messages: Optional[List[BaseMessage]] = None,
     user_input: Optional[str] = None,
+    workflow_inputs: Optional[Dict[str, Any]] = None,
 ) -> WorkflowState:
     """Build initial state from workflow node names and agent configs."""
 
@@ -93,6 +97,7 @@ def build_workflow_initial_state(
             agent_config=agent_config,
             user_input=user_input,
             messages=[],
+            workflow_inputs=workflow_inputs,
         )
         for node_name, agent_config in agents_by_name.items()
     }
@@ -110,6 +115,7 @@ def build_workflow_initial_state(
             agent_config=agent_config,
             user_input=user_input,
             messages=messages,
+            workflow_inputs=workflow_inputs,
         )
 
     return {
@@ -119,4 +125,5 @@ def build_workflow_initial_state(
         "crew_id": crew_id,
         "conversation_id": conversation_id,
         "user_input": user_input,
+        "workflow_inputs": dict(workflow_inputs or {}),
     }

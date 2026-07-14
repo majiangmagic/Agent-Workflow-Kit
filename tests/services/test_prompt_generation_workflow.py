@@ -55,6 +55,59 @@ def test_nai_version_detection_accepts_ui_and_natural_language_forms():
     assert detect_target_model("未指定模型") == "nai_v4"
 
 
+@pytest.mark.asyncio
+async def test_requirement_analyzer_keeps_expressive_and_faithful_prompts_separate(
+    monkeypatch,
+):
+    prompts = []
+
+    class CaptureModel:
+        async def ainvoke(self, messages):
+            prompts.append(str(messages[0].content))
+            return AIMessage(content="{}")
+
+    monkeypatch.setattr(
+        "app.services.ai_provider.ai_provider.get_model",
+        lambda **kwargs: CaptureModel(),
+    )
+    base_state = {
+        "user_input": "a character standing inside a crystal cave",
+        "resolved_user_request": "a character standing inside a crystal cave",
+        "request_contract": {
+            "required_elements": ["character", "crystal cave"],
+            "spatial_relations": ["character inside cave"],
+        },
+        "editor_succeeded": True,
+        "model": "test-model",
+        "system_prompt": "Analyze faithfully.",
+    }
+
+    expressive = await analyze_node(
+        {
+            **base_state,
+            "workflow_inputs": {
+                "prompt_strategy": "expressive",
+                "target_model": "sdxl",
+            },
+        }
+    )
+    faithful = await analyze_node(
+        {
+            **base_state,
+            "workflow_inputs": {
+                "prompt_strategy": "faithful",
+                "target_model": "nai_v4",
+            },
+        }
+    )
+
+    assert "Faithful strategy is active" not in prompts[0]
+    assert "Faithful strategy is active" in prompts[1]
+    assert expressive["requirements_json"]["prompt_strategy"] == "expressive"
+    assert expressive["requirements_json"]["target_model"] == "sdxl"
+    assert faithful["requirements_json"]["prompt_strategy"] == "faithful"
+
+
 def patch_model_nodes(monkeypatch, records_by_focus):
     """Keep workflow tests offline while exercising the real graph topology."""
 

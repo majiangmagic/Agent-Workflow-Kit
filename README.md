@@ -148,6 +148,31 @@ Workflow 节点可以通过 `agent_package` 引用分组 Agent：
 
 两种写法都会把节点状态里的 Agent 名保持为 `research_agent`。
 
+Workflow 还可以声明通用 UI 控件。控件值通过 `workflow_inputs` 进入全局
+workflow state，并自动注入每个 Agent 节点：
+
+```json
+{
+  "ui": {
+    "controls": [
+      {
+        "key": "prompt_strategy",
+        "label": "提示策略",
+        "type": "segmented",
+        "default": "expressive",
+        "options": [
+          { "value": "expressive", "label": "积极扩写" },
+          { "value": "faithful", "label": "保守还原" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+目前支持 `select` 和 `segmented`。节点通过
+`state["workflow_inputs"]["prompt_strategy"]` 读取，不需要把控制参数拼进用户消息。
+
 生成器输出的是可读、可改、可继续维护的 Python 代码。
 
 ## 记忆
@@ -228,6 +253,18 @@ POST   /api/chat
 - 传 `conversation_id`：继续已有会话
 - 不传 `conversation_id`：传 `user_id` 和 `crew_id` 创建新会话并发送消息
 - 响应会返回 `conversation_id`
+
+普通与流式聊天接口都接受可选的结构化工作流参数：
+
+```json
+{
+  "message": "生成一张图",
+  "workflow_inputs": {
+    "target_model": "nai_v4",
+    "prompt_strategy": "faithful"
+  }
+}
+```
 
 ## 目录结构
 

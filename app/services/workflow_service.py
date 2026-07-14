@@ -62,6 +62,7 @@ class WorkflowService:
         user_id: str,
         user_input: str,
         messages: Optional[List[BaseMessage]] = None,
+        workflow_inputs: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Build the configured workflow's initial state from common context."""
 
@@ -77,6 +78,7 @@ class WorkflowService:
             conversation_id=conversation_id,
             messages=messages,
             user_input=user_input,
+            workflow_inputs=workflow_inputs,
         )
 
     @staticmethod
@@ -87,6 +89,7 @@ class WorkflowService:
         user_id: str,
         user_input: str,
         messages: Optional[List[BaseMessage]] = None,
+        workflow_inputs: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Any, Dict[str, Any]]:
         """Create a workflow and its initial state without exposing state shape."""
 
@@ -101,5 +104,6 @@ class WorkflowService:
             user_id=user_id,
             user_input=user_input,
             messages=messages,
+            workflow_inputs=workflow_inputs,
         )
         return workflow, initial_state

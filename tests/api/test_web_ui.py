@@ -22,6 +22,7 @@ def test_web_app_serves_index():
     assert "创建示例 Crew" in response.text
     assert 'id="deleteLastTurnButton"' in response.text
     assert 'id="deleteConversationButton"' in response.text
+    assert 'id="workflowControls"' in response.text
     assert 'id="progressList" class="pipeline-track"></div>' in response.text
 
 
@@ -50,7 +51,11 @@ def test_workflow_options_endpoint_lists_registered_workflows():
         "prompt_aggregator",
         "format_optimizer",
     }
-    assert prompt_workflow["ui"]["default_target_model"] == "nai_v4"
+    controls = {
+        control["key"]: control for control in prompt_workflow["ui"]["controls"]
+    }
+    assert controls["prompt_strategy"]["default"] == "expressive"
+    assert controls["target_model"]["default"] == "nai_v4"
 
 
 @pytest.mark.asyncio

@@ -25,6 +25,7 @@ def build_initial_state(
     conversation_id: str = "",
     messages: Optional[List[BaseMessage]] = None,
     user_input: Optional[str] = None,
+    workflow_inputs: Optional[Dict[str, Any]] = None,
 ) -> WorkflowState:
     """Build initial state for the supervisor workflow definition."""
 
@@ -37,4 +38,5 @@ def build_initial_state(
         conversation_id=conversation_id,
         messages=messages,
         user_input=user_input,
+        workflow_inputs=workflow_inputs,
     )

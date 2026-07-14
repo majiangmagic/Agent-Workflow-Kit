@@ -80,6 +80,36 @@ def test_generate_workflow_writes_to_patched_workflows_dir(tmp_path, monkeypatch
     assert '"planner": "official_supervisor"' in state_text
     assert '"researcher": "research_agent"' in state_text
     assert '"reviewer": "review_supervisor"' in state_text
+    assert "workflow_inputs: Optional[Dict[str, Any]] = None" in state_text
+
+
+def test_generate_workflow_normalizes_generic_ui_controls():
+    workflow = generate_workflow.parse_workflow_dsl(
+        {
+            "kind": "workflow",
+            "name": "controlled_workflow",
+            "nodes": {"worker": {"agent": "worker"}},
+            "edges": [{"from": "worker", "to": "END"}],
+            "ui": {
+                "controls": [
+                    {
+                        "key": "Prompt Strategy",
+                        "type": "segmented",
+                        "default": "expressive",
+                        "options": [
+                            {"value": "expressive", "label": "Expressive"},
+                            {"value": "faithful", "label": "Faithful"},
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+
+    control = workflow.ui["controls"][0]
+    assert control["key"] == "prompt_strategy"
+    assert control["type"] == "segmented"
+    assert control["default"] == "expressive"
 
 
 def test_generate_workflow_rejects_edges_to_missing_nodes(tmp_path, monkeypatch):

@@ -44,6 +44,7 @@ class SupervisorState(TypedDict):
     tools: List[Dict[str, Any]]
     messages: List[BaseMessage]
     user_input: Optional[str]
+    workflow_inputs: Dict[str, Any]
     plan: Optional[Dict[str, Any]]
     action: Optional[SupervisorAction]
     agents: Dict[str, DelegatedAgentState]
