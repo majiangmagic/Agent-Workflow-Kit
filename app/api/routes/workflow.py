@@ -113,10 +113,18 @@ async def create_sample_crew(
             detail=f"Unknown workflow '{workflow_name}'",
         )
 
+    existing_crews = await CrewService.get_crews(db)
+    workflow_crew_count = sum(
+        1
+        for crew in existing_crews
+        if (crew.settings or {}).get("workflow_type") == workflow_name
+    )
+    crew_name = f"{workflow_name} demo {workflow_crew_count + 1}"
+
     crew = await CrewService.create_crew(
         db,
         CrewCreate(
-            name=f"{workflow_name} demo",
+            name=crew_name,
             description=f"Demo crew for {workflow_name}",
             settings={"workflow_type": workflow_name},
         ),

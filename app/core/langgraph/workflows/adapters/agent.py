@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Optional
 from langchain_core.runnables import RunnableConfig
 
 from app.core.config import settings
+from app.core.langgraph.events import emit_event
 
 AgentStatePreparer = Callable[[Dict[str, Any]], Dict[str, Any]]
 WorkflowUpdateBuilder = Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]]
@@ -66,19 +67,44 @@ def create_agent_node(
     ) -> Dict[str, Any]:
         """Run one agent graph and return only the workflow fields it updates."""
 
-        agent_state = (
-            await maybe_await(extension.prepare_agent_state(state))
-            if extension is not None
-            else state["nodes"][agent_name]
+        emit_event(
+            {
+                "object": "workflow.event",
+                "type": "workflow.node.started",
+                "node": agent_name,
+            }
         )
-        agent_state = trim_agent_memory(agent_state)
-        updated_agent_state = await agent_graph.ainvoke(agent_state, config=config)
-        updated_agent_state = trim_agent_memory(updated_agent_state)
-
-        if extension is not None:
-            return await maybe_await(
-                extension.build_workflow_update(state, updated_agent_state)
+        try:
+            agent_state = (
+                await maybe_await(extension.prepare_agent_state(state))
+                if extension is not None
+                else state["nodes"][agent_name]
             )
-        return {"nodes": {agent_name: updated_agent_state}}
+            agent_state = trim_agent_memory(agent_state)
+            updated_agent_state = await agent_graph.ainvoke(agent_state, config=config)
+            updated_agent_state = trim_agent_memory(updated_agent_state)
+
+            emit_event(
+                {
+                    "object": "workflow.event",
+                    "type": "workflow.node.completed",
+                    "node": agent_name,
+                }
+            )
+            if extension is not None:
+                return await maybe_await(
+                    extension.build_workflow_update(state, updated_agent_state)
+                )
+            return {"nodes": {agent_name: updated_agent_state}}
+        except Exception as exc:
+            emit_event(
+                {
+                    "object": "workflow.event",
+                    "type": "workflow.node.error",
+                    "node": agent_name,
+                    "error": str(exc),
+                }
+            )
+            raise
 
     return run_agent

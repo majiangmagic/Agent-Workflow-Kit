@@ -1,6 +1,7 @@
 """End-to-end API tests for the chat workflow path."""
 
 import uuid
+import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -119,5 +120,98 @@ async def test_create_crew_agents_and_chat_end_to_end(db_session):
         db_agents = (await db_session.execute(select(Agent))).scalars().all()
         assert len(db_agents) == 2
         assert any(agent.is_supervisor for agent in db_agents)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_includes_workflow_node_events(db_session):
+    """Streaming chat should expose visible workflow progress events."""
+
+    async def override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            crew_response = await client.post(
+                "/api/crews/",
+                json={
+                    "name": "Stream Crew",
+                    "description": "Streaming test crew",
+                    "settings": {"workflow_type": "supervisor_simple"},
+                },
+            )
+            crew_id = crew_response.json()["id"]
+            supervisor_response = await client.post(
+                "/api/agents/",
+                json={
+                    "crew_id": crew_id,
+                    "name": "supervisor",
+                    "system_prompt": "You coordinate the crew.",
+                    "is_supervisor": True,
+                },
+            )
+            assert supervisor_response.status_code == 201
+            conversation_response = await client.post(
+                "/api/conversations/",
+                json={
+                    "user_id": "stream-user",
+                    "crew_id": crew_id,
+                    "title": "Stream Chat",
+                },
+            )
+            conversation_id = conversation_response.json()["id"]
+
+            def fake_official_supervisor_invoke(state, config=None):
+                return {
+                    **state,
+                    "messages": state["messages"]
+                    + [AIMessage(content="Stream workflow response")],
+                    "action": None,
+                }
+
+            with patch(
+                "app.agents.official_supervisor.official_runtime."
+                "OfficialSupervisorRuntime.invoke",
+                side_effect=fake_official_supervisor_invoke,
+            ):
+                response = await client.post(
+                    f"/api/conversations/{conversation_id}/chat/stream",
+                    json={"message": "Hello through stream"},
+                )
+
+            assert response.status_code == 200
+            events = []
+            for block in response.text.strip().split("\n\n"):
+                if not block.startswith("data: "):
+                    continue
+                raw = block.removeprefix("data: ")
+                if raw == "[DONE]":
+                    events.append("[DONE]")
+                else:
+                    events.append(json.loads(raw))
+
+            event_types = [
+                event["type"]
+                for event in events
+                if isinstance(event, dict) and event.get("object") == "workflow.event"
+            ]
+            assert "workflow.started" in event_types
+            assert "workflow.node.started" in event_types
+            assert "workflow.node.completed" in event_types
+            assert "workflow.completed" in event_types
+            assert any(
+                isinstance(event, dict)
+                and event.get("object") == "chat.completion.chunk"
+                and event["choices"][0]["delta"].get("content")
+                == "Stream workflow response"
+                for event in events
+            )
+            assert events[-1] == "[DONE]"
     finally:
         app.dependency_overrides.pop(get_db, None)

@@ -16,6 +16,8 @@ const els = {
   conversationList: document.querySelector("#conversationList"),
   chatTitle: document.querySelector("#chatTitle"),
   chatMeta: document.querySelector("#chatMeta"),
+  clearProgressButton: document.querySelector("#clearProgressButton"),
+  progressList: document.querySelector("#progressList"),
   messageList: document.querySelector("#messageList"),
   chatForm: document.querySelector("#chatForm"),
   messageInput: document.querySelector("#messageInput"),
@@ -95,6 +97,14 @@ function renderConversations() {
   }
 }
 
+function upsertConversation(conversation) {
+  state.conversations = [
+    conversation,
+    ...state.conversations.filter((item) => item.id !== conversation.id),
+  ];
+  renderConversations();
+}
+
 function renderMessages(messages) {
   els.messageList.innerHTML = "";
   if (!messages.length) {
@@ -108,6 +118,40 @@ function renderMessages(messages) {
   for (const message of messages) {
     appendMessage(message.role, message.content);
   }
+}
+
+function clearProgress() {
+  els.progressList.innerHTML = "";
+}
+
+function appendProgress(event) {
+  const item = document.createElement("div");
+  const kind = progressKind(event.type);
+  item.className = `progress-item ${kind}`;
+  item.textContent = progressLabel(event);
+  els.progressList.appendChild(item);
+  els.progressList.scrollLeft = els.progressList.scrollWidth;
+}
+
+function progressKind(type) {
+  if (String(type).includes("error")) return "error";
+  if (String(type).includes("completed")) return "completed";
+  if (String(type).includes("started") || String(type).includes("assigned")) return "started";
+  return "";
+}
+
+function progressLabel(event) {
+  const type = event.type || "event";
+  const node = event.node || event.agent_name || event.scope || "";
+  if (type === "workflow.started") return "workflow 开始";
+  if (type === "workflow.completed") return "workflow 完成";
+  if (type === "workflow.node.started") return `${node} 开始`;
+  if (type === "workflow.node.completed") return `${node} 完成`;
+  if (type === "workflow.task.assigned") return `${node} 分配任务`;
+  if (type === "workflow.agent.error" || type === "workflow.node.error") {
+    return `${node || "节点"} 错误`;
+  }
+  return node ? `${node} ${type}` : type;
 }
 
 function appendMessage(role, content) {
@@ -216,6 +260,57 @@ async function updateCrewWorkflow() {
   state.crews = state.crews.map((item) => item.id === updated.id ? updated : item);
 }
 
+async function createConversation(crew, userId, title) {
+  return requestJson("/api/conversations/", {
+    method: "POST",
+    body: JSON.stringify({
+      user_id: userId,
+      crew_id: crew.id,
+      title,
+    }),
+  });
+}
+
+async function streamChat(conversationId, message) {
+  const response = await fetch(`/api/conversations/${conversationId}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  if (!response.ok || !response.body) {
+    const text = await response.text();
+    throw new Error(text || `${response.status} ${response.statusText}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalContent = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() || "";
+
+    for (const chunk of chunks) {
+      const line = chunk.split("\n").find((part) => part.startsWith("data: "));
+      if (!line) continue;
+      const raw = line.slice(6);
+      if (raw === "[DONE]") return finalContent;
+      const event = JSON.parse(raw);
+      if (event.object === "workflow.event") {
+        appendProgress(event);
+      } else if (event.object === "chat.completion.chunk") {
+        const content = event.choices?.[0]?.delta?.content || "";
+        if (content) finalContent += content;
+      }
+    }
+  }
+  return finalContent;
+}
+
 async function createSampleCrew() {
   const workflowName = selectedWorkflowName();
   if (!workflowName) {
@@ -248,6 +343,7 @@ function resetChat() {
   els.chatMeta.textContent = selectedCrew()?.name || "未选择 Crew";
   renderConversations();
   renderMessages([]);
+  clearProgress();
   els.messageInput.focus();
 }
 
@@ -260,33 +356,23 @@ async function sendMessage(message) {
     if (!userId) throw new Error("请输入用户");
 
     appendMessage("user", message);
+    clearProgress();
     setStatus("运行中");
 
-    let response;
+    let conversationId = state.currentConversationId;
     if (state.currentConversationId) {
-      response = await requestJson("/api/chat", {
-        method: "POST",
-        body: JSON.stringify({
-          conversation_id: state.currentConversationId,
-          message,
-        }),
-      });
+      conversationId = state.currentConversationId;
     } else {
       await updateCrewWorkflow();
-      response = await requestJson("/api/chat", {
-        method: "POST",
-        body: JSON.stringify({
-          user_id: userId,
-          crew_id: crew.id,
-          title: message.slice(0, 40),
-          message,
-        }),
-      });
-      state.currentConversationId = response.conversation_id;
+      const conversation = await createConversation(crew, userId, message.slice(0, 40));
+      conversationId = conversation.id;
+      state.currentConversationId = conversationId;
       els.chatTitle.textContent = message.slice(0, 40);
-      els.chatMeta.textContent = response.conversation_id;
+      els.chatMeta.textContent = conversationId;
+      upsertConversation(conversation);
     }
-    appendMessage("assistant", response.content);
+    const finalContent = await streamChat(conversationId, message);
+    appendMessage("assistant", finalContent || "Workflow completed without content.");
     await loadConversations();
     setStatus("就绪");
   } catch (error) {
@@ -321,6 +407,7 @@ els.userIdInput.addEventListener("change", loadConversations);
 els.createCrewButton.addEventListener("click", createSampleCrew);
 els.refreshButton.addEventListener("click", loadConversations);
 els.newChatButton.addEventListener("click", resetChat);
+els.clearProgressButton.addEventListener("click", clearProgress);
 
 els.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();

@@ -48,16 +48,23 @@ async def test_create_sample_crew_for_prompt_workflow(db_session):
             response = await client.post(
                 "/api/workflows/prompt_generation_workflow/sample-crew"
             )
+            second_response = await client.post(
+                "/api/workflows/prompt_generation_workflow/sample-crew"
+            )
 
         assert response.status_code == 200
+        assert second_response.status_code == 200
         crew = response.json()
+        second_crew = second_response.json()
         assert crew["settings"]["workflow_type"] == "prompt_generation_workflow"
+        assert crew["name"] == "prompt_generation_workflow demo 1"
+        assert second_crew["name"] == "prompt_generation_workflow demo 2"
 
         agents = (await db_session.execute(select(Agent))).scalars().all()
         names = {agent.name for agent in agents}
         assert "official_supervisor" in names
         assert "prompt_requirement_analyzer" in names
         assert "prompt_format_converter" in names
-        assert len(agents) == 6
+        assert len(agents) == 12
     finally:
         app.dependency_overrides.pop(get_db, None)
