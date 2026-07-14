@@ -73,6 +73,12 @@ class MessageResponse(MessageBase):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
+class DeleteTurnResponse(BaseModel):
+    """Response after deleting one conversation turn."""
+
+    deleted_messages: int
+
+
 class ConversationWithMessages(ConversationResponse):
     """Conversation schema with included messages"""
     messages: List[MessageResponse] = Field(default_factory=list)

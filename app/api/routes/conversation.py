@@ -2,15 +2,17 @@
 API routes for conversations and chat functionality
 """
 import asyncio
+import logging
 from typing import List, Optional, Dict, Any
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 
 from app.db.base import get_db
+from app.core.config import settings
 from app.models.conversation import MessageRole, MessageStatus
 from app.models.activity_log import ActivityType
 from app.core.langgraph.checkpoint import get_checkpointer
@@ -30,6 +32,7 @@ from app.schemas.conversation import (
     ConversationUpdate,
     MessageCreate,
     MessageResponse,
+    DeleteTurnResponse,
     ChatRequest,
     ChatResponse,
     UnifiedChatRequest,
@@ -39,6 +42,7 @@ from app.schemas.conversation import (
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 chat_router = APIRouter(tags=["chat"])
+logger = logging.getLogger(__name__)
 
 
 def agent_to_workflow_config(agent) -> Dict[str, Any]:
@@ -54,6 +58,45 @@ def agent_to_workflow_config(agent) -> Dict[str, Any]:
         "is_supervisor": agent.is_supervisor,
         "tools": [],
     }
+
+
+def db_messages_to_langchain(messages) -> List[BaseMessage]:
+    """Convert persisted conversation messages into workflow short-term memory."""
+
+    converted: List[BaseMessage] = []
+    for message in messages:
+        content = str(message.content or "").strip()
+        if not content:
+            continue
+        if message.status != MessageStatus.COMPLETED:
+            continue
+        if message.role == MessageRole.USER:
+            converted.append(HumanMessage(content=content))
+        elif message.role == MessageRole.ASSISTANT:
+            workflow_memory = (message.meta_data or {}).get("workflow_memory")
+            converted.append(
+                AIMessage(
+                    content=content,
+                    additional_kwargs={"workflow_memory": workflow_memory}
+                    if workflow_memory
+                    else {},
+                )
+            )
+        elif message.role == MessageRole.SYSTEM:
+            converted.append(SystemMessage(content=content))
+    return converted
+
+
+async def get_short_term_history(db: AsyncSession, conversation_id: uuid.UUID) -> List[BaseMessage]:
+    """Load the recent DB transcript used to seed workflow-level memory."""
+
+    limit = max(settings.short_term_memory_turns, 1) * 2
+    messages = await ConversationService.get_recent_messages(
+        db=db,
+        conversation_id=conversation_id,
+        limit=limit,
+    )
+    return db_messages_to_langchain(messages)
 
 
 def extract_workflow_response(final_state: Dict[str, Any]) -> str:
@@ -72,6 +115,20 @@ def extract_workflow_response(final_state: Dict[str, Any]) -> str:
             return str(message.content)
 
     return "Workflow completed without an assistant response."
+
+
+def extract_workflow_memory(final_state: Dict[str, Any]) -> Dict[str, Any]:
+    """提取跨轮规范状态，不保存运行时 Prompt 或模型配置。"""
+
+    for node_state in (final_state.get("nodes") or {}).values():
+        contract = node_state.get("request_contract")
+        if isinstance(contract, dict) and contract.get("resolved_request"):
+            return {
+                "request_contract": contract,
+                "resolved_user_request": node_state.get("resolved_user_request")
+                or contract["resolved_request"],
+            }
+    return {}
 
 
 def get_supervisor_state(final_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -132,13 +189,21 @@ async def build_workflow_for_conversation(
             detail=f"No supervisor agent found for crew {crew.id}",
         )
 
-    workflow, initial_state = WorkflowService.create_workflow_run(
-        crew=crew,
-        agents=[agent_to_workflow_config(agent) for agent in agents],
-        conversation_id=str(conversation.id),
-        user_id=conversation.user_id,
-        user_input=user_message.content,
-    )
+    try:
+        history_messages = await get_short_term_history(db, conversation.id)
+        workflow, initial_state = WorkflowService.create_workflow_run(
+            crew=crew,
+            agents=[agent_to_workflow_config(agent) for agent in agents],
+            conversation_id=str(conversation.id),
+            user_id=conversation.user_id,
+            user_input=user_message.content,
+            messages=history_messages,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
     return workflow, initial_state, supervisor
 
@@ -168,12 +233,14 @@ async def run_chat_turn(
             config={"configurable": {"thread_id": str(conversation.id)}},
         )
         response_content = extract_workflow_response(final_state)
+        workflow_memory = extract_workflow_memory(final_state)
     except Exception as e:
         print(f"Error running supervisor workflow: {str(e)}")
         response_content = (
             "I apologize, but I encountered an issue processing your request. "
             "Please try again later."
         )
+        workflow_memory = {}
 
     assistant_message = await ConversationService.add_message(
         db=db,
@@ -183,6 +250,7 @@ async def run_chat_turn(
         agent_id=supervisor.id,
         parent_id=user_message.id,
         status=MessageStatus.COMPLETED,
+        metadata={"workflow_memory": workflow_memory} if workflow_memory else {},
     )
 
     await ActivityLogService.log_activity(
@@ -338,6 +406,32 @@ async def delete_conversation(
     return None
 
 
+@router.delete("/{conversation_id}/turns/latest", response_model=DeleteTurnResponse)
+async def delete_latest_turn(
+    conversation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete the latest user turn and its following assistant/agent messages."""
+
+    deleted_messages = await ConversationService.delete_latest_turn(db, conversation_id)
+    if deleted_messages < 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Conversation with ID {conversation_id} not found",
+        )
+    if deleted_messages == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conversation has no user turn to delete",
+        )
+
+    checkpointer = get_checkpointer()
+    if checkpointer is not None:
+        await checkpointer.adelete_thread(str(conversation_id))
+
+    return DeleteTurnResponse(deleted_messages=deleted_messages)
+
+
 @router.get("/{conversation_id}/messages", response_model=List[MessageResponse])
 async def get_messages(
     conversation_id: uuid.UUID,
@@ -480,6 +574,7 @@ async def chat_stream(
     async def stream_response():
         message_id = str(assistant_message.id)
         content_so_far = ""
+        workflow_memory = {}
         sink = WorkflowEventSink()
 
         async def run_workflow():
@@ -533,6 +628,7 @@ async def chat_stream(
             final_state = await workflow_task
 
             content_so_far = extract_workflow_response(final_state)
+            workflow_memory = extract_workflow_memory(final_state)
 
             data = {
                 "id": message_id,
@@ -566,11 +662,10 @@ async def chat_stream(
             yield stream_data(data)
             
         except Exception as e:
-            # Log the error
-            print(f"Error during streaming response: {str(e)}")
+            logger.exception("Workflow streaming failed for conversation %s", conversation_id)
             
             # Send error message to the client
-            error_msg = "I apologize, but I encountered an issue processing your request. Please try again later."
+            error_msg = f"工作流执行失败：{e}"
             content_so_far = error_msg
             
             # Format error as a streaming chunk
@@ -612,7 +707,10 @@ async def chat_stream(
             db=db,
             message_id=assistant_message.id,
             status=MessageStatus.COMPLETED,
-            metadata={"final_content": content_so_far}
+            metadata={
+                "final_content": content_so_far,
+                **({"workflow_memory": workflow_memory} if workflow_memory else {}),
+            }
         )
         
         # Update the message content

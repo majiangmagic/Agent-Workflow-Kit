@@ -13,8 +13,8 @@ from app.core.config import settings
 class AIProvider:
     """Service for managing AI model connections and interactions"""
     
-    DEFAULT_MODEL = "gpt-5.4"
-    SUPERVISOR_MODEL = "gpt-5.5"
+    DEFAULT_MODEL = settings.llm_default_model
+    SUPERVISOR_MODEL = settings.llm_supervisor_model
 
     def __init__(self):
         self.openrouter_models = {}
@@ -39,6 +39,7 @@ class AIProvider:
             A LangChain chat model instance
         """
         try:
+            kwargs.setdefault("timeout", settings.llm_request_timeout_seconds)
             # Try using OpenRouter API first
             model = ChatOpenAI(
                 model=model_name,

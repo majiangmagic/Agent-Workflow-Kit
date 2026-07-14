@@ -4,6 +4,7 @@ import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
+from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 
 from app.core.config import settings
@@ -13,6 +14,24 @@ AgentStatePreparer = Callable[[Dict[str, Any]], Dict[str, Any]]
 WorkflowUpdateBuilder = Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]]
 AgentNodeExtensionFactory = Callable[[str], "AgentNodeExtension"]
 
+RUNTIME_STATE_FIELDS = {
+    "agent_id",
+    "agent_name",
+    "description",
+    "system_prompt",
+    "model",
+    "temperature",
+    "tools",
+    "messages",
+    "user_input",
+    "plan",
+    "action",
+    "agents",
+    "status",
+    "results",
+    "error",
+}
+
 
 @dataclass(frozen=True)
 class AgentNodeExtension:
@@ -20,6 +39,39 @@ class AgentNodeExtension:
 
     prepare_agent_state: AgentStatePreparer
     build_workflow_update: WorkflowUpdateBuilder
+
+
+def create_pipeline_context_extension(node_name: str) -> AgentNodeExtension:
+    """Expose upstream business fields to a generated workflow node."""
+
+    def prepare_agent_state(state: Dict[str, Any]) -> Dict[str, Any]:
+        context: Dict[str, Any] = {"user_input": state.get("user_input")}
+        for current_name, node_state in (state.get("nodes") or {}).items():
+            if current_name == node_name:
+                continue
+            for key, value in node_state.items():
+                if key in RUNTIME_STATE_FIELDS or value is None:
+                    continue
+                if isinstance(value, list) and isinstance(context.get(key), list):
+                    merged_values = list(context[key])
+                    for item in value:
+                        if item not in merged_values:
+                            merged_values.append(item)
+                    context[key] = merged_values
+                else:
+                    context[key] = value
+        return {**state["nodes"][node_name], **context}
+
+    def build_workflow_update(
+        state: Dict[str, Any],
+        updated_agent_state: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        return {"nodes": {node_name: updated_agent_state}}
+
+    return AgentNodeExtension(
+        prepare_agent_state=prepare_agent_state,
+        build_workflow_update=build_workflow_update,
+    )
 
 
 def trim_agent_memory(agent_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -58,6 +110,7 @@ def create_agent_node(
     agent_name: str,
     agent_graph: Any,
     extension: Optional[AgentNodeExtension] = None,
+    continue_on_error: bool = False,
 ):
     """Create a workflow node from a reusable agent graph."""
 
@@ -105,6 +158,20 @@ def create_agent_node(
                     "error": str(exc),
                 }
             )
+            if continue_on_error:
+                failed_state = {
+                    **state["nodes"][agent_name],
+                    "status": "error",
+                    "error": str(exc),
+                    "messages": [
+                        *state["nodes"][agent_name].get("messages", []),
+                        AIMessage(
+                            content=f"{agent_name} failed and the workflow continued.",
+                            name=agent_name,
+                        ),
+                    ],
+                }
+                return {"nodes": {agent_name: failed_state}}
             raise
 
     return run_agent

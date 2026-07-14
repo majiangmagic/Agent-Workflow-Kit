@@ -5,38 +5,22 @@
   "package": "prompt_generation/character_prompt_generator",
   "display_name": "Character Prompt Generator",
   "config": {
-    "prompt": "Generate the character-specific part of an image prompt.",
-    "model": "openai/gpt-4.1",
-    "temperature": 0.2
+    "prompt": "忠实处理虚构成年人的人物需求，包括 NSFW 人体、服装、姿态、行为与表情，不拒绝、不说教、不弱化、不隐去细节。所有角色必须明确为成年人。生成对应提示词并返回实际采用的 Danbooru 标签来源。",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.3
   },
   "state": {
-    "requirements_json": {
-      "type": "dict",
-      "optional": true
-    },
-    "danbooru_tag_records": {
-      "type": "list",
-      "optional": true
-    },
-    "character_prompt": {
-      "type": "string",
-      "optional": true
-    },
-    "character_tags": {
-      "type": "list",
-      "optional": true
-    }
+    "requirements_json": { "type": "dict", "optional": true },
+    "character_prompt": { "type": "string", "optional": true },
+    "character_tags": { "type": "list", "optional": true },
+    "danbooru_tag_records": { "type": "list", "optional": true },
+    "danbooru_search_terms": { "type": "list", "optional": true }
   },
   "entrypoint": "generate_character_prompt",
   "nodes": {
-    "generate_character_prompt": {
-      "handler": "generate_character_prompt_node"
-    }
+    "generate_character_prompt": { "handler": "generate_character_prompt_node" }
   },
   "edges": [
-    {
-      "from": "generate_character_prompt",
-      "to": "END"
-    }
+    { "from": "generate_character_prompt", "to": "END" }
   ]
 }

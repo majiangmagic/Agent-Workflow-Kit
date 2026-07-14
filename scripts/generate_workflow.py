@@ -19,14 +19,16 @@ WORKFLOWS_DIR = ROOT / "app" / "core" / "langgraph" / "workflows"
 class WorkflowNodeDsl:
     name: str
     agent: str
+    display_name: str
     agent_package_segments: List[str]
     state_agent: Optional[str]
     extension: Optional[str]
+    on_error: str
 
 
 @dataclass(frozen=True)
 class WorkflowEdgeDsl:
-    source: str
+    source: str | tuple[str, ...]
     target: str
 
 
@@ -37,6 +39,7 @@ class WorkflowDsl:
     entrypoint: str
     nodes: List[WorkflowNodeDsl]
     edges: List[WorkflowEdgeDsl]
+    ui: Dict[str, Any]
 
 
 def snake_case(value: str) -> str:
@@ -145,13 +148,20 @@ def parse_nodes(raw_nodes: Any) -> List[WorkflowNodeDsl]:
         )
         state_agent = node_config.get("state_agent")
         extension = node_config.get("extension")
+        on_error = str(node_config.get("on_error") or "fail").strip().lower()
+        if on_error not in {"fail", "continue"}:
+            raise ValueError(
+                f"workflow node '{name}' on_error must be 'fail' or 'continue'"
+            )
         nodes.append(
             WorkflowNodeDsl(
                 name=name,
                 agent=agent,
+                display_name=str(node_config.get("display_name") or name),
                 agent_package_segments=parse_package_segments(raw_package, agent),
                 state_agent=snake_case(str(state_agent)) if state_agent else None,
                 extension=snake_case(str(extension)) if extension else None,
+                on_error=on_error,
             )
         )
     return nodes
@@ -162,10 +172,19 @@ def parse_edges(raw_edges: Any) -> List[WorkflowEdgeDsl]:
 
     edges = []
     for raw_edge in raw_edges or []:
-        source = snake_case(str(raw_edge["from"]))
-        raw_target = str(raw_edge["to"])
-        target = "END" if raw_target == "END" else snake_case(raw_target)
-        edges.append(WorkflowEdgeDsl(source=source, target=target))
+        raw_source = raw_edge["from"]
+        source = (
+            tuple(snake_case(str(item)) for item in raw_source)
+            if isinstance(raw_source, list)
+            else snake_case(str(raw_source))
+        )
+        raw_targets = raw_edge["to"]
+        if not isinstance(raw_targets, list):
+            raw_targets = [raw_targets]
+        for raw_target in raw_targets:
+            target_text = str(raw_target)
+            target = "END" if target_text == "END" else snake_case(target_text)
+            edges.append(WorkflowEdgeDsl(source=source, target=target))
     return edges
 
 
@@ -187,10 +206,16 @@ def parse_workflow_dsl(data: Dict[str, Any]) -> WorkflowDsl:
 
     edges = parse_edges(data.get("edges"))
     for edge in edges:
-        if edge.source not in node_names:
-            raise ValueError(f"edge source '{edge.source}' is not defined in nodes")
+        sources = edge.source if isinstance(edge.source, tuple) else (edge.source,)
+        for source in sources:
+            if source not in node_names:
+                raise ValueError(f"edge source '{source}' is not defined in nodes")
         if edge.target != "END" and edge.target not in node_names:
             raise ValueError(f"edge target '{edge.target}' is not defined in nodes")
+
+    ui = data.get("ui") or {}
+    if not isinstance(ui, dict):
+        raise ValueError("workflow.ui must be a map")
 
     return WorkflowDsl(
         name=name,
@@ -198,6 +223,7 @@ def parse_workflow_dsl(data: Dict[str, Any]) -> WorkflowDsl:
         entrypoint=entrypoint,
         nodes=nodes,
         edges=edges,
+        ui=ui,
     )
 
 
@@ -232,10 +258,7 @@ def render_graph(workflow: WorkflowDsl) -> str:
     agent_imports = render_agent_imports(workflow)
     extension_import_text, extension_by_node = extension_imports(workflow)
     node_calls = "\n".join(render_node_call(node, extension_by_node) for node in workflow.nodes)
-    edge_calls = "\n".join(
-        f'''    workflow.add_edge("{edge.source}", {"END" if edge.target == "END" else repr(edge.target)})'''
-        for edge in workflow.edges
-    )
+    edge_calls = "\n".join(render_edge_call(edge) for edge in workflow.edges)
     imports = "\n".join(
         part
         for part in [
@@ -260,6 +283,7 @@ from app.core.langgraph.workflows.{workflow.name}.state import (
 )
 
 WORKFLOW_NAME = "{workflow.name}"
+WORKFLOW_METADATA = {render_workflow_metadata(workflow)}
 
 
 def {factory_name}(
@@ -279,8 +303,49 @@ workflow_registry.register(
     WORKFLOW_NAME,
     {factory_name},
     state_builder=build_initial_state,
+    metadata=WORKFLOW_METADATA,
 )
 '''
+
+
+def render_workflow_metadata(workflow: WorkflowDsl) -> str:
+    """Render JSON-safe discovery metadata directly from the workflow DSL."""
+
+    metadata = {
+        "entrypoint": workflow.entrypoint,
+        "nodes": [
+            {
+                "name": node.name,
+                "agent": node.agent,
+                "display_name": node.display_name,
+                "on_error": node.on_error,
+            }
+            for node in workflow.nodes
+        ],
+        "edges": [
+            {
+                "from": list(edge.source)
+                if isinstance(edge.source, tuple)
+                else edge.source,
+                "to": edge.target,
+            }
+            for edge in workflow.edges
+        ],
+        "ui": workflow.ui,
+    }
+    return repr(metadata)
+
+
+def render_edge_call(edge: WorkflowEdgeDsl) -> str:
+    """Render one edge while keeping ordinary generated code easy to read."""
+
+    source = (
+        repr(list(edge.source))
+        if isinstance(edge.source, tuple)
+        else f'"{edge.source}"'
+    )
+    target = "END" if edge.target == "END" else f'"{edge.target}"'
+    return f"    workflow.add_edge({source}, {target})"
 
 
 def extension_imports(workflow: WorkflowDsl) -> tuple[str, Dict[str, str]]:
@@ -297,6 +362,18 @@ def extension_imports(workflow: WorkflowDsl) -> tuple[str, Dict[str, str]]:
                 "import create_supervisor_extension"
             )
             mapping[node.name] = "create_supervisor_extension"
+        elif node.extension == "supervisor_planner":
+            imports.append(
+                "from app.core.langgraph.workflows.adapters.supervisor "
+                "import create_supervisor_planner_extension"
+            )
+            mapping[node.name] = "create_supervisor_planner_extension"
+        elif node.extension == "pipeline_context":
+            imports.append(
+                "from app.core.langgraph.workflows.adapters.agent "
+                "import create_pipeline_context_extension"
+            )
+            mapping[node.name] = "create_pipeline_context_extension"
         else:
             raise ValueError(f"Unsupported workflow node extension: {node.extension}")
 
@@ -325,11 +402,16 @@ def render_node_call(
         if node.name in extension_by_node
         else ""
     )
+    error_policy = (
+        "\n            continue_on_error=True,"
+        if node.on_error == "continue"
+        else ""
+    )
     return f'''    workflow.add_node(
         "{node.name}",
         create_agent_node(
             "{node.name}",
-            {agent_graph_factory_alias(node)}(),{extension}
+            {agent_graph_factory_alias(node)}(),{extension}{error_policy}
         ),
     )'''
 

@@ -11,6 +11,8 @@ CHARACTER_PROMPT_GENERATOR_ENTRYPOINT = "generate_character_prompt"
 
 
 def create_generate_character_prompt_node():
+    """Create the generate_character_prompt node callable."""
+
     return generate_character_prompt_node
 
 
@@ -24,5 +26,7 @@ AGENT_DEFINITION = AgentDefinition(
             factory=create_generate_character_prompt_node,
         ),
     ],
-    edges=[AgentEdgeSpec(source="generate_character_prompt", target=END)],
+    edges=[
+        AgentEdgeSpec(source="generate_character_prompt", target=END),
+    ],
 )

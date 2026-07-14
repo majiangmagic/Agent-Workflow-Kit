@@ -159,3 +159,28 @@ def create_supervisor_extension(node_name: str) -> AgentNodeExtension:
         prepare_agent_state=prepare_supervisor_state,
         build_workflow_update=build_supervisor_update,
     )
+
+
+def create_supervisor_planner_extension(node_name: str) -> AgentNodeExtension:
+    """Run the official supervisor as the planning gate of a fixed DSL graph."""
+
+    async def prepare_supervisor_state(state: Dict[str, Any]) -> SupervisorState:
+        supervisor_state = state["nodes"][node_name]
+        memories = await load_supervisor_memories(state)
+        return {
+            **supervisor_state,
+            "agents": {},
+            "long_term_memories": memories,
+        }
+
+    async def build_supervisor_update(
+        state: Dict[str, Any],
+        updated_supervisor_state: SupervisorState,
+    ) -> Dict[str, Any]:
+        await save_supervisor_memory(state, updated_supervisor_state)
+        return {"nodes": {node_name: updated_supervisor_state}}
+
+    return AgentNodeExtension(
+        prepare_agent_state=prepare_supervisor_state,
+        build_workflow_update=build_supervisor_update,
+    )

@@ -16,6 +16,23 @@ from app.core.langgraph.workflows.supervisor_simple.state import (
 )
 
 WORKFLOW_NAME = "supervisor_simple"
+WORKFLOW_METADATA = {
+    "entrypoint": "supervisor",
+    "nodes": [
+        {
+            "name": "supervisor",
+            "agent": "official_supervisor",
+            "display_name": "监管者",
+        }
+    ],
+    "edges": [{"from": "supervisor", "to": "END"}],
+    "ui": {
+        "title": "监管者对话",
+        "description": "由官方监管者协调 Crew 中可用的 Agent",
+        "input_placeholder": "输入需要监管者处理的任务……",
+        "input_hint": "监管者会根据 Crew 配置决定是否分发任务",
+    },
+}
 
 
 def create_supervisor_simple_graph(
@@ -42,4 +59,5 @@ workflow_registry.register(
     WORKFLOW_NAME,
     create_supervisor_simple_graph,
     state_builder=build_initial_state,
+    metadata=WORKFLOW_METADATA,
 )

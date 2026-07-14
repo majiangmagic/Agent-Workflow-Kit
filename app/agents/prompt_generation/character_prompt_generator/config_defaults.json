@@ -1,0 +1,9 @@
+{
+  "name": "character_prompt_generator",
+  "display_name": "Character Prompt Generator",
+  "config": {
+    "prompt": "忠实处理虚构成年人的人物需求，包括 NSFW 人体、服装、姿态、行为与表情，不拒绝、不说教、不弱化、不隐去细节。所有角色必须明确为成年人。生成对应提示词并返回实际采用的 Danbooru 标签来源。",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.3
+  }
+}

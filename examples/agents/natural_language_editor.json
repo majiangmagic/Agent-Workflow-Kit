@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "kind": "agent",
+  "name": "natural_language_editor",
+  "package": "prompt_generation/natural_language_editor",
+  "display_name": "自然语言编辑器",
+  "config": {
+    "prompt": "你是通用的对话状态编辑器。结合历史用户消息理解省略、指代、纠正、补充、删除、恢复和确认等自然口语，把最新一轮变更应用到此前的完整请求。不要把内容拆成人物、场景或标签，也不要依赖固定短语映射，不要凭空补充用户没有表达的细节。",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.1
+  },
+  "state": {
+    "turn_intent": { "type": "string", "optional": true },
+    "edit_operations": { "type": "list", "optional": true },
+    "request_contract": { "type": "dict", "optional": true },
+    "resolved_user_request": { "type": "string", "optional": true },
+    "editor_succeeded": { "type": "boolean", "optional": true }
+  },
+  "entrypoint": "resolve",
+  "nodes": {
+    "resolve": { "handler": "resolve_node" }
+  },
+  "edges": [
+    { "from": "resolve", "to": "END" }
+  ]
+}

@@ -215,3 +215,68 @@ async def test_chat_stream_includes_workflow_node_events(db_session):
             assert events[-1] == "[DONE]"
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.mark.asyncio
+async def test_delete_latest_turn_removes_last_user_and_assistant_messages(db_session):
+    """Deleting the latest turn should preserve earlier conversation history."""
+
+    async def override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            crew_response = await client.post(
+                "/api/crews/",
+                json={
+                    "name": "Delete Turn Crew",
+                    "description": "Test latest turn deletion",
+                    "settings": {"workflow_type": "supervisor_simple"},
+                },
+            )
+            crew_id = crew_response.json()["id"]
+
+            conversation_response = await client.post(
+                "/api/conversations/",
+                json={
+                    "user_id": "delete-turn-user",
+                    "crew_id": crew_id,
+                    "title": "Delete turn chat",
+                },
+            )
+            conversation_id = conversation_response.json()["id"]
+
+            for role, content in [
+                ("user", "first question"),
+                ("assistant", "first answer"),
+                ("user", "bad question"),
+                ("assistant", "bad answer"),
+            ]:
+                response = await client.post(
+                    f"/api/conversations/{conversation_id}/messages",
+                    json={"role": role, "content": content},
+                )
+                assert response.status_code == 201
+
+            delete_response = await client.delete(
+                f"/api/conversations/{conversation_id}/turns/latest"
+            )
+            assert delete_response.status_code == 200
+            assert delete_response.json()["deleted_messages"] == 2
+
+            messages_response = await client.get(
+                f"/api/conversations/{conversation_id}/messages"
+            )
+            messages = messages_response.json()
+
+        assert [message["content"] for message in messages] == [
+            "first question",
+            "first answer",
+        ]
+    finally:
+        app.dependency_overrides.pop(get_db, None)

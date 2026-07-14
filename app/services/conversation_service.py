@@ -56,7 +56,7 @@ class ConversationService:
             user_id=user_id,
             crew_id=crew_id,
             title=title,
-            metadata=metadata or {},
+            meta_data=metadata or {},
             is_active=True
         )
         db.add(conversation)
@@ -80,7 +80,7 @@ class ConversationService:
         if title is not None:
             conversation.title = title
         if metadata is not None:
-            conversation.metadata = metadata
+            conversation.meta_data = metadata
         if is_active is not None:
             conversation.is_active = is_active
         
@@ -97,6 +97,32 @@ class ConversationService:
         await db.delete(conversation)
         await db.flush()
         return True
+
+    @staticmethod
+    async def delete_latest_turn(db: AsyncSession, conversation_id: uuid.UUID) -> int:
+        """Delete the latest user turn and all following assistant/agent messages."""
+
+        conversation = await ConversationService.get_conversation(db, conversation_id)
+        if not conversation:
+            return -1
+
+        messages = await ConversationService.get_messages(db, conversation_id)
+        latest_user_index = None
+        for index in range(len(messages) - 1, -1, -1):
+            if messages[index].role == MessageRole.USER:
+                latest_user_index = index
+                break
+
+        if latest_user_index is None:
+            return 0
+
+        messages_to_delete = messages[latest_user_index:]
+        for message in reversed(messages_to_delete):
+            await db.delete(message)
+
+        conversation.updated_at = datetime.utcnow()
+        await db.flush()
+        return len(messages_to_delete)
     
     @staticmethod
     async def add_message(
@@ -122,7 +148,7 @@ class ConversationService:
             agent_id=agent_id,
             parent_id=parent_id,
             status=status,
-            metadata=metadata or {}
+            meta_data=metadata or {}
         )
         
         db.add(message)
@@ -145,6 +171,18 @@ class ConversationService:
         query = query.order_by(Message.created_at).offset(skip).limit(limit)
         result = await db.execute(query)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def get_recent_messages(
+        db: AsyncSession,
+        conversation_id: uuid.UUID,
+        limit: int = 20
+    ) -> List[Message]:
+        """Get the most recent messages for workflow short-term memory."""
+        query = select(Message).where(Message.conversation_id == conversation_id)
+        query = query.order_by(Message.created_at.desc()).limit(limit)
+        result = await db.execute(query)
+        return list(reversed(result.scalars().all()))
     
     @staticmethod
     async def get_message(db: AsyncSession, message_id: uuid.UUID) -> Optional[Message]:
@@ -168,7 +206,7 @@ class ConversationService:
         message.status = status
         if metadata:
             # Update metadata without overwriting existing values
-            message.metadata.update(metadata)
+            message.meta_data = {**(message.meta_data or {}), **metadata}
         
         await db.flush()
         return message

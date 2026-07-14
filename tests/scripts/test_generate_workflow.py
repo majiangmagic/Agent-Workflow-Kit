@@ -69,6 +69,8 @@ def test_generate_workflow_writes_to_patched_workflows_dir(tmp_path, monkeypatch
     assert 'extension=create_supervisor_extension("planner")' in graph_text
     assert 'workflow.add_edge("reviewer", END)' in graph_text
     assert 'workflow.set_entry_point("planner")' in graph_text
+    assert "WORKFLOW_METADATA =" in graph_text
+    assert "metadata=WORKFLOW_METADATA" in graph_text
     assert (
         "from app.agents.research.research_agent.graph "
         "import create_graph as create_research_research_agent_graph"
@@ -141,3 +143,74 @@ def test_generate_workflow_accepts_agent_path_as_package(tmp_path, monkeypatch):
     assert "from app.agents.research.research_agent.graph import" in graph_text
     assert "create_research_research_agent_graph()" in graph_text
     assert '"researcher": "research_agent"' in state_text
+
+
+def test_generate_workflow_supports_parallel_fanout_and_join(tmp_path, monkeypatch):
+    """List edge endpoints should generate native LangGraph parallel edges."""
+
+    workflows_dir = tmp_path / "workflows"
+    monkeypatch.setattr(generate_workflow, "WORKFLOWS_DIR", workflows_dir)
+    dsl_path = tmp_path / "parallel.json"
+    dsl_path.write_text(
+        json.dumps(
+            {
+                "kind": "workflow",
+                "name": "parallel_workflow",
+                "entrypoint": "start",
+                "nodes": {
+                    "start": {"agent": "start_agent"},
+                    "left": {"agent": "left_agent"},
+                    "right": {"agent": "right_agent"},
+                    "join": {
+                        "agent": "join_agent",
+                        "extension": "pipeline_context",
+                    },
+                },
+                "edges": [
+                    {"from": "start", "to": ["left", "right"]},
+                    {"from": ["left", "right"], "to": "join"},
+                    {"from": "join", "to": "END"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert generate_workflow.main([str(dsl_path)]) == 0
+    graph_text = (workflows_dir / "parallel_workflow" / "graph.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'workflow.add_edge("start", "left")' in graph_text
+    assert 'workflow.add_edge("start", "right")' in graph_text
+    assert "workflow.add_edge(['left', 'right'], \"join\")" in graph_text
+    assert 'extension=create_pipeline_context_extension("join")' in graph_text
+
+
+def test_generate_workflow_renders_continue_error_policy(tmp_path, monkeypatch):
+    workflows_dir = tmp_path / "workflows"
+    monkeypatch.setattr(generate_workflow, "WORKFLOWS_DIR", workflows_dir)
+    dsl_path = tmp_path / "resilient.json"
+    dsl_path.write_text(
+        json.dumps(
+            {
+                "kind": "workflow",
+                "name": "resilient_workflow",
+                "nodes": {
+                    "optional_planner": {
+                        "agent": "planner_agent",
+                        "on_error": "continue",
+                    }
+                },
+                "edges": [{"from": "optional_planner", "to": "END"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert generate_workflow.main([str(dsl_path)]) == 0
+    graph_text = (workflows_dir / "resilient_workflow" / "graph.py").read_text(
+        encoding="utf-8"
+    )
+    assert "continue_on_error=True" in graph_text
+    assert "'on_error': 'continue'" in graph_text

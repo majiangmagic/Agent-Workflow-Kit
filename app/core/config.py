@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openai_api_key: Optional[str] = None
     tavily_api_key: Optional[str] = None
+    llm_default_model: str = "gpt-5.4"
+    llm_supervisor_model: str = "gpt-5.5"
+    llm_request_timeout_seconds: float = 75.0
     
     # MCP Server Configuration
     mcp_test_server_url: str = "https://searchapi-mcp.prod.diginext.site/mcp"

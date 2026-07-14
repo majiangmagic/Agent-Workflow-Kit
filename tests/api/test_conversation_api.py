@@ -6,7 +6,7 @@ import asyncio
 import uuid
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock, AsyncMock
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from app.main import app
 from app.models.conversation import MessageRole, MessageStatus
@@ -48,6 +48,8 @@ def mock_services():
         # Use AsyncMock for async methods
         mock_conversation_service.add_message = AsyncMock(return_value=mock_message)
         mock_conversation_service.get_messages = AsyncMock(return_value=[])
+        mock_conversation_service.get_recent_messages = AsyncMock(return_value=[])
+        mock_conversation_service.delete_latest_turn = AsyncMock(return_value=2)
         mock_conversation_service.update_message_status = AsyncMock()
 
         # Setup mock crew service
@@ -135,6 +137,55 @@ async def test_chat_endpoint(mock_services):
     # Verify conversation service methods were called
     mock_services["conversation_service"].get_conversation.assert_called_once()
     mock_services["conversation_service"].add_message.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_chat_endpoint_seeds_workflow_with_recent_history(mock_services):
+    """The workflow should receive DB conversation history as short-term memory."""
+
+    previous_user = MagicMock()
+    previous_user.content = "first request"
+    previous_user.role = MessageRole.USER
+    previous_user.status = MessageStatus.COMPLETED
+
+    previous_assistant = MagicMock()
+    previous_assistant.content = "first answer"
+    previous_assistant.role = MessageRole.ASSISTANT
+    previous_assistant.status = MessageStatus.COMPLETED
+
+    current_user = MagicMock()
+    current_user.id = uuid.uuid4()
+    current_user.content = "follow up"
+    current_user.role = MessageRole.USER
+    current_user.status = MessageStatus.COMPLETED
+
+    mock_services["conversation_service"].add_message.side_effect = [
+        current_user,
+        MagicMock(id=uuid.uuid4()),
+    ]
+    mock_services["conversation_service"].get_recent_messages.return_value = [
+        previous_user,
+        previous_assistant,
+        current_user,
+    ]
+
+    response = client.post(
+        f"/api/conversations/{mock_conversation_id}/chat",
+        json={"message": "follow up"},
+    )
+
+    assert response.status_code == 200
+    kwargs = mock_services["workflow_service"].create_workflow_run.call_args.kwargs
+    assert [type(message) for message in kwargs["messages"]] == [
+        HumanMessage,
+        AIMessage,
+        HumanMessage,
+    ]
+    assert [message.content for message in kwargs["messages"]] == [
+        "first request",
+        "first answer",
+        "follow up",
+    ]
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,7 @@ class WorkflowSpec:
 
     factory: WorkflowFactory
     state_builder: Optional[StateBuilder] = None
+    metadata: Dict[str, Any] | None = None
 
 
 class WorkflowRegistry:
@@ -32,10 +33,12 @@ class WorkflowRegistry:
         name: str,
         factory: WorkflowFactory,
         state_builder: Optional[StateBuilder] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._specs[name] = WorkflowSpec(
             factory=factory,
             state_builder=state_builder,
+            metadata=metadata,
         )
 
     def get_spec(self, name: Optional[str] = None, *, fallback: bool = True) -> WorkflowSpec:
@@ -70,6 +73,14 @@ class WorkflowRegistry:
 
     def names(self) -> list[str]:
         return sorted(self._specs)
+
+    def get_metadata(
+        self, name: Optional[str] = None, *, fallback: bool = True
+    ) -> Dict[str, Any]:
+        """Return JSON-safe topology and UI metadata for a workflow."""
+
+        spec = self.get_spec(name, fallback=fallback)
+        return dict(spec.metadata or {})
 
 
 workflow_registry = WorkflowRegistry()

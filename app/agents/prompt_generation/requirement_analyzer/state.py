@@ -19,4 +19,7 @@ class PromptRequirementAnalyzerState(TypedDict):
     user_input: Optional[str]
 
     # 下面是 DSL 声明的业务状态字段。
+    resolved_user_request: Optional[str]
+    editor_succeeded: Optional[bool]
+    request_contract: Optional[Dict[str, Any]]
     requirements_json: Optional[Dict[str, Any]]

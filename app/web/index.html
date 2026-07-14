@@ -3,73 +3,85 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Agent Workflow Kit</title>
+    <title>Prompt Workflow Studio</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <main class="shell">
+    <main class="workspace">
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-mark">AW</div>
+          <div class="brand-mark">PW</div>
           <div>
-            <h1>Agent Workflow Kit</h1>
-            <p id="status">初始化</p>
+            <h1>Prompt Workflow</h1>
+            <p id="status"><span class="status-dot"></span>正在初始化</p>
           </div>
         </div>
 
-        <label class="field">
-          <span>用户</span>
-          <input id="userIdInput" value="local-user" autocomplete="off" />
-        </label>
-
-        <label class="field">
-          <span>工作流</span>
-          <select id="workflowSelect"></select>
-        </label>
-
-        <label class="field">
-          <span>Crew</span>
-          <select id="crewSelect"></select>
-        </label>
-
-        <div class="button-row">
-          <button id="createCrewButton" class="secondary-button" type="button">创建示例 Crew</button>
-          <button id="deleteCrewButton" class="danger-button" type="button">删除 Crew</button>
+        <div class="settings-band">
+          <label class="field">
+            <span>用户标识</span>
+            <input id="userIdInput" value="local-user" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>工作流</span>
+            <select id="workflowSelect"></select>
+          </label>
+          <label class="field">
+            <span>Crew</span>
+            <select id="crewSelect"></select>
+          </label>
+          <div class="crew-actions">
+            <button id="createCrewButton" class="primary-button" type="button">创建示例 Crew</button>
+            <button id="deleteCrewButton" class="icon-button danger" type="button" title="删除 Crew" aria-label="删除 Crew">×</button>
+          </div>
         </div>
-        <button id="newChatButton" class="primary-button" type="button">新对话</button>
 
         <div class="history-head">
-          <span>历史对话</span>
-          <button id="refreshButton" class="icon-button" type="button" title="刷新">↻</button>
+          <span>最近会话</span>
+          <div class="history-actions">
+            <button id="newChatButton" class="icon-button" type="button" title="新建会话" aria-label="新建会话">＋</button>
+            <button id="refreshButton" class="icon-button" type="button" title="刷新" aria-label="刷新">↻</button>
+          </div>
         </div>
         <div id="conversationList" class="conversation-list"></div>
       </aside>
 
-      <section class="chat-panel">
-        <header class="chat-header">
+      <section class="workbench">
+        <header class="workbench-header">
           <div>
-            <h2 id="chatTitle">选择工作流后开始</h2>
-            <p id="chatMeta">未选择会话</p>
+            <span class="eyebrow">IMAGE PROMPT PIPELINE</span>
+            <h2 id="chatTitle">新建提示词任务</h2>
+            <p id="chatMeta">选择 Crew 后输入绘图需求</p>
+          </div>
+          <div class="header-actions">
+            <button id="deleteLastTurnButton" class="danger-button subtle" type="button" disabled>删除最后一轮</button>
+            <button id="deleteConversationButton" class="danger-button" type="button" disabled>删除当前会话</button>
+            <label id="modelControl" class="model-control">
+              <span>目标模型</span>
+              <select id="targetModelSelect"></select>
+            </label>
           </div>
         </header>
 
-        <section class="progress-panel" aria-label="运行过程">
-          <div class="progress-head">
-            <span>运行过程</span>
-            <button id="clearProgressButton" class="icon-button" type="button" title="清空">×</button>
+        <section class="pipeline" aria-label="工作流进度">
+          <div class="pipeline-head">
+            <span>执行链</span>
+            <button id="clearProgressButton" class="text-button" type="button">清空状态</button>
           </div>
-          <div id="progressList" class="progress-list"></div>
+          <div id="progressList" class="pipeline-track"></div>
         </section>
 
         <div id="messageList" class="message-list"></div>
 
         <form id="chatForm" class="composer">
-          <textarea id="messageInput" rows="2" placeholder="输入消息"></textarea>
-          <button id="sendButton" type="submit">发送</button>
+          <textarea id="messageInput" rows="3" placeholder="描述人物、场景、画风、构图或负面要求……"></textarea>
+          <div class="composer-footer">
+            <span id="inputHint"></span>
+            <button id="sendButton" class="send-button" type="submit">生成 Prompt <span>→</span></button>
+          </div>
         </form>
       </section>
     </main>
-
     <script src="/static/app.js"></script>
   </body>
 </html>

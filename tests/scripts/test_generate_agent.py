@@ -54,7 +54,13 @@ def test_generate_agent_preserves_existing_node_blocks(tmp_path, monkeypatch):
     nodes_path = agents_dir / "research_agent" / "nodes.py"
     nodes_text = nodes_path.read_text(encoding="utf-8")
     nodes_path.write_text(
-        nodes_text.replace("return {}", "return {'answer': 'kept'}", 1),
+        nodes_text.replace(
+            '# <agent-node name="search">',
+            '# <agent-node name="search">\n'
+            'def normalize_query(value):\n'
+            '    return value.strip()\n',
+            1,
+        ).replace("return {}", "return {'answer': 'kept'}", 1),
         encoding="utf-8",
     )
 
@@ -62,6 +68,12 @@ def test_generate_agent_preserves_existing_node_blocks(tmp_path, monkeypatch):
     refreshed = nodes_path.read_text(encoding="utf-8")
 
     assert "return {'answer': 'kept'}" in refreshed
+    assert "def normalize_query" in refreshed
+    spec_text = (agents_dir / "research_agent" / "spec.py").read_text(
+        encoding="utf-8"
+    )
+    assert "from app.agents.research_agent.nodes import search_node" in spec_text
+    assert "return search_node" in spec_text
     assert "节点名 \"search\" 是 DSL 的稳定标识" in refreshed
     assert "prompt" in (
         agents_dir / "research_agent" / "config_defaults.json"

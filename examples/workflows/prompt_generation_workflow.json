@@ -3,84 +3,86 @@
   "kind": "workflow",
   "name": "prompt_generation_workflow",
   "entrypoint": "supervisor",
+  "ui": {
+    "title": "图像提示词工作流",
+    "description": "拆分需求、并行查询并生成目标模型可用的提示词",
+    "input_placeholder": "描述人物、场景、画风、构图或负面要求……",
+    "input_hint": "未写明模型时使用 NAI 风格",
+    "target_models": [
+      { "value": "nai", "label": "NAI 默认风格" },
+      { "value": "sdxl", "label": "SDXL" },
+      { "value": "illustrious", "label": "Illustrious / 光辉" },
+      { "value": "pony", "label": "Pony" },
+      { "value": "flux", "label": "Flux" },
+      { "value": "auto", "label": "从需求识别" }
+    ],
+    "default_target_model": "nai"
+  },
   "nodes": {
     "supervisor": {
       "agent": "official_supervisor",
-      "note": "This workflow uses a lightweight planning node in code; it does not call the official supervisor runtime for delegation yet."
+      "display_name": "监管规划",
+      "extension": "supervisor_planner",
+      "on_error": "continue"
+    },
+    "natural_language_editor": {
+      "agent": "natural_language_editor",
+      "display_name": "口语理解",
+      "agent_package": "prompt_generation/natural_language_editor",
+      "extension": "pipeline_context"
     },
     "requirement_analyzer": {
       "agent": "prompt_requirement_analyzer",
-      "agent_package": "prompt_generation/requirement_analyzer"
+      "display_name": "需求分析",
+      "agent_package": "prompt_generation/requirement_analyzer",
+      "extension": "pipeline_context"
     },
     "character_prompt_generator": {
       "agent": "character_prompt_generator",
-      "agent_package": "prompt_generation/character_prompt_generator"
+      "display_name": "人物提示词",
+      "agent_package": "prompt_generation/character_prompt_generator",
+      "extension": "pipeline_context"
     },
     "scene_prompt_generator": {
       "agent": "scene_prompt_generator",
-      "agent_package": "prompt_generation/scene_prompt_generator"
+      "display_name": "场景提示词",
+      "agent_package": "prompt_generation/scene_prompt_generator",
+      "extension": "pipeline_context"
     },
-    "special_prompt_generator": {
-      "agent": "special_prompt_generator",
-      "agent_package": "prompt_generation/special_prompt_generator"
+    "additional_prompt_generator": {
+      "agent": "additional_prompt_generator",
+      "display_name": "额外提示词",
+      "agent_package": "prompt_generation/additional_prompt_generator",
+      "extension": "pipeline_context"
     },
-    "danbooru_query": {
-      "agent": "prompt_danbooru_query",
-      "agent_package": "prompt_generation/danbooru_query"
+    "prompt_aggregator": {
+      "agent": "prompt_aggregator",
+      "display_name": "提示词汇总",
+      "agent_package": "prompt_generation/prompt_aggregator",
+      "extension": "pipeline_context"
     },
-    "prompt_writer": {
-      "agent": "prompt_writer",
-      "agent_package": "prompt_generation/prompt_writer"
-    },
-    "prompt_reviewer": {
-      "agent": "prompt_reviewer",
-      "agent_package": "prompt_generation/prompt_reviewer"
-    },
-    "format_converter": {
-      "agent": "prompt_format_converter",
-      "agent_package": "prompt_generation/format_converter"
+    "format_optimizer": {
+      "agent": "prompt_format_optimizer",
+      "display_name": "格式优化",
+      "agent_package": "prompt_generation/format_optimizer",
+      "extension": "pipeline_context"
     }
   },
   "edges": [
-    {
-      "from": "supervisor",
-      "to": "requirement_analyzer"
-    },
-    {
-      "from": "requirement_analyzer",
-      "to": "danbooru_query"
-    },
-    {
-      "from": "danbooru_query",
-      "to": "character_prompt_generator"
-    },
-    {
-      "from": "danbooru_query",
-      "to": "scene_prompt_generator"
-    },
-    {
-      "from": "danbooru_query",
-      "to": "special_prompt_generator"
-    },
+    { "from": "supervisor", "to": "natural_language_editor" },
+    { "from": "natural_language_editor", "to": "requirement_analyzer" },
+    { "from": "requirement_analyzer", "to": "character_prompt_generator" },
+    { "from": "requirement_analyzer", "to": "scene_prompt_generator" },
+    { "from": "requirement_analyzer", "to": "additional_prompt_generator" },
     {
       "from": [
         "character_prompt_generator",
         "scene_prompt_generator",
-        "special_prompt_generator"
+        "additional_prompt_generator"
       ],
-      "to": "prompt_writer"
+      "to": "prompt_aggregator"
     },
-    {
-      "from": "prompt_writer",
-      "to": "prompt_reviewer"
-    },
-    {
-      "from": "prompt_reviewer",
-      "to": "format_converter"
-    },
-    {
-      "from": "format_converter",
-      "to": "END"
-    }
+    { "from": "prompt_aggregator", "to": "format_optimizer" },
+    { "from": "format_optimizer", "to": "END" }
   ]
 }

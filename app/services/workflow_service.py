@@ -1,7 +1,9 @@
 """Service helpers for selecting and creating LangGraph workflows."""
 
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from langchain_core.messages import BaseMessage
 
 from app.core.langgraph.workflows.prompt_generation_workflow import (  # noqa: F401
     create_prompt_generation_workflow_graph,
@@ -59,6 +61,7 @@ class WorkflowService:
         conversation_id: str,
         user_id: str,
         user_input: str,
+        messages: Optional[List[BaseMessage]] = None,
     ) -> Dict[str, Any]:
         """Build the configured workflow's initial state from common context."""
 
@@ -72,6 +75,7 @@ class WorkflowService:
             agents=agents,
             user_id=user_id,
             conversation_id=conversation_id,
+            messages=messages,
             user_input=user_input,
         )
 
@@ -82,6 +86,7 @@ class WorkflowService:
         conversation_id: str,
         user_id: str,
         user_input: str,
+        messages: Optional[List[BaseMessage]] = None,
     ) -> Tuple[Any, Dict[str, Any]]:
         """Create a workflow and its initial state without exposing state shape."""
 
@@ -95,5 +100,6 @@ class WorkflowService:
             conversation_id=conversation_id,
             user_id=user_id,
             user_input=user_input,
+            messages=messages,
         )
         return workflow, initial_state

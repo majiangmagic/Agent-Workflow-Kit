@@ -206,11 +206,14 @@ def read_existing_node_blocks(nodes_path: Path) -> Dict[str, str]:
     }
 
 
-def block_handler_name(block: str) -> Optional[str]:
-    """Return the Python function name defined inside an existing node block."""
+def block_handler_name(block: str, expected_handler: str) -> Optional[str]:
+    """Return the DSL handler when it still exists in a preserved node block."""
 
-    match = DEF_RE.search(block)
-    return match.group("name") if match else None
+    pattern = re.compile(
+        rf"^(?:async\s+)?def\s+{re.escape(expected_handler)}\s*\(",
+        re.MULTILINE,
+    )
+    return expected_handler if pattern.search(block) else None
 
 
 def python_type(field: Dict[str, Any]) -> str:
@@ -380,7 +383,9 @@ def render_nodes(agent: AgentDsl, existing_blocks: Dict[str, str]) -> tuple[str,
     for node in agent.nodes:
         existing = existing_blocks.get(node.name)
         if existing:
-            handler_names[node.name] = block_handler_name(existing) or node.handler
+            handler_names[node.name] = (
+                block_handler_name(existing, node.handler) or node.handler
+            )
             blocks.append(existing)
         else:
             handler_names[node.name] = node.handler
