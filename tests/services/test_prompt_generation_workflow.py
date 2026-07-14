@@ -35,8 +35,8 @@ def prompt_generation_agents():
         {
             "id": "agent-danbooru",
             "name": "prompt_danbooru_query",
-            "description": "Maps requirements to Danbooru tags.",
-            "system_prompt": "Map tags.",
+            "description": "Queries Danbooru tags.",
+            "system_prompt": "Query Danbooru tags.",
             "model": "test-model",
             "temperature": 0.2,
             "tools": [],
@@ -98,10 +98,31 @@ def prompt_generation_agents():
     ]
 
 
+def patch_danbooru(monkeypatch, tags):
+    """Keep workflow tests offline while still testing the Danbooru path."""
+
+    async def fake_generate_terms(raw_request, state):
+        return ["elaina", "majo no tabitabi", "broom", "forest", "cyberpunk"]
+
+    async def fake_query_tags(terms, limit=20):
+        return tags
+
+    monkeypatch.setattr(
+        "app.agents.prompt_generation.danbooru_query.nodes."
+        "generate_danbooru_search_terms",
+        fake_generate_terms,
+    )
+    monkeypatch.setattr(
+        "app.agents.prompt_generation.danbooru_query.nodes.query_danbooru_tags",
+        fake_query_tags,
+    )
+
+
 @pytest.mark.asyncio
-async def test_prompt_generation_workflow_runs_grouped_agents():
+async def test_prompt_generation_workflow_runs_grouped_agents(monkeypatch):
     """The prompt workflow should pass upstream outputs through grouped agents."""
 
+    patch_danbooru(monkeypatch, ["cyberpunk", "neon_lights", "cityscape"])
     user_input = "Create a flux cyberpunk portrait of a girl in a rainy night city"
     initial_state = build_initial_state(
         crew_id="crew-1",
@@ -133,8 +154,16 @@ async def test_prompt_generation_workflow_runs_grouped_agents():
 
 
 @pytest.mark.asyncio
-async def test_prompt_generation_workflow_keeps_elaina_tags():
-    user_input = "伊蕾娜在林间骑着扫帚飞行"
+async def test_prompt_generation_workflow_uses_danbooru_returned_elaina_tags(
+    monkeypatch,
+):
+    """Elaina tags should come from the Danbooru query node, not local mappings."""
+
+    patch_danbooru(
+        monkeypatch,
+        ["elaina_(majo_no_tabitabi)", "majo_no_tabitabi", "broom", "forest"],
+    )
+    user_input = "\u4f0a\u857e\u5a1c\u5728\u6797\u95f4\u9a91\u7740\u626b\u5e1a\u98de\u884c"
     initial_state = build_initial_state(
         crew_id="crew-1",
         agents=prompt_generation_agents(),
@@ -153,8 +182,10 @@ async def test_prompt_generation_workflow_keeps_elaina_tags():
     )
 
     nodes = result["nodes"]
+    requirements = nodes["requirement_analyzer"]["requirements_json"]
     tags = nodes["danbooru_query"]["danbooru_tags"]
     final_prompt = nodes["format_converter"]["formatted_prompt"]
+    assert requirements["characters"] == []
     assert "elaina_(majo_no_tabitabi)" in tags
     assert "majo_no_tabitabi" in final_prompt
     assert "broom" in final_prompt
