@@ -484,6 +484,120 @@ async def test_natural_language_editor_allows_explicit_anchor_removal(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_natural_language_editor_replaces_character_without_reinheriting_old_one(
+    monkeypatch,
+):
+    """明确替换应采用完整新契约，旧角色及其关系不能被锚点保护补回。"""
+
+    previous_contract = {
+        "resolved_request": "old character walking on a street",
+        "required_elements": ["old character", "street", "walking"],
+        "forbidden_elements": [],
+        "spatial_relations": ["rope attached to old character"],
+        "positive_constraints": ["full body"],
+        "negative_constraints": [],
+    }
+
+    class ReplacementModel:
+        async def ainvoke(self, messages):
+            return AIMessage(
+                content=(
+                    '{"turn_intent":"replace_character","edit_operations":['
+                    '{"op":"replace","target":"character",'
+                    '"value":"new character"}],'
+                    '"resolved_user_request":"new character walking on a street",'
+                    '"request_contract":{"resolved_request":'
+                    '"new character walking on a street",'
+                    '"required_elements":["new character","street","walking"],'
+                    '"forbidden_elements":[],"spatial_relations":['
+                    '"rope attached to new character"],'
+                    '"positive_constraints":["full body"],'
+                    '"negative_constraints":[]}}'
+                )
+            )
+
+    monkeypatch.setattr(
+        "app.services.ai_provider.ai_provider.get_model",
+        lambda **kwargs: ReplacementModel(),
+    )
+    result = await resolve_node(
+        {
+            "user_input": "replace the character with new character",
+            "messages": [
+                AIMessage(
+                    content="previous output",
+                    additional_kwargs={
+                        "workflow_memory": {"request_contract": previous_contract}
+                    },
+                ),
+                HumanMessage(content="replace the character with new character"),
+            ],
+            "system_prompt": "Resolve edits.",
+            "model": AIProvider.SUPERVISOR_MODEL,
+            "temperature": 0.1,
+        }
+    )
+
+    contract = result["request_contract"]
+    assert contract["required_elements"] == ["new character", "street", "walking"]
+    assert contract["spatial_relations"] == ["rope attached to new character"]
+    assert "old character" not in result["resolved_user_request"]
+
+
+@pytest.mark.asyncio
+async def test_natural_language_editor_removal_matches_operation_value(monkeypatch):
+    """target 是字段名时，也要按 value 删除对应旧锚点。"""
+
+    class RemovalModel:
+        async def ainvoke(self, messages):
+            return AIMessage(
+                content=(
+                    '{"turn_intent":"remove","edit_operations":['
+                    '{"op":"remove","target":"required_elements",'
+                    '"value":"old character"}],'
+                    '"resolved_user_request":"an empty street",'
+                    '"request_contract":{"resolved_request":"an empty street",'
+                    '"required_elements":["street"],"forbidden_elements":[],'
+                    '"spatial_relations":[],"positive_constraints":[],'
+                    '"negative_constraints":[]}}'
+                )
+            )
+
+    monkeypatch.setattr(
+        "app.services.ai_provider.ai_provider.get_model",
+        lambda **kwargs: RemovalModel(),
+    )
+    result = await resolve_node(
+        {
+            "user_input": "remove old character",
+            "messages": [
+                AIMessage(
+                    content="previous output",
+                    additional_kwargs={
+                        "workflow_memory": {
+                            "request_contract": {
+                                "resolved_request": "old character on a street",
+                                "required_elements": ["old character", "street"],
+                                "forbidden_elements": [],
+                                "spatial_relations": [],
+                                "positive_constraints": [],
+                                "negative_constraints": [],
+                            }
+                        }
+                    },
+                ),
+                HumanMessage(content="remove old character"),
+            ],
+            "system_prompt": "Resolve edits.",
+            "model": AIProvider.SUPERVISOR_MODEL,
+            "temperature": 0.1,
+        }
+    )
+
+    assert result["request_contract"]["required_elements"] == ["street"]
+
+
+@pytest.mark.asyncio
 async def test_destructive_edit_is_reviewed_by_supervisor_model(monkeypatch):
     """快速模型尝试破坏锚点时，必须经过强模型语义复核。"""
 

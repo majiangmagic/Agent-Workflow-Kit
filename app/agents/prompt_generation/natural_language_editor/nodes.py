@@ -122,9 +122,14 @@ def _operation_changes_item(item: str, operations: list[Any]) -> bool:
         op = str(operation.get("op") or "").casefold().strip()
         if op not in {"remove", "delete", "exclude", "replace"}:
             continue
-        target = str(operation.get("target") or "").casefold().strip()
-        if target and (target in item_key or item_key in target):
+        if op == "replace":
             return True
+        for operand in (operation.get("target"), operation.get("value")):
+            operand_key = str(operand or "").casefold().strip()
+            if operand_key and (
+                operand_key in item_key or item_key in operand_key
+            ):
+                return True
     return False
 
 
