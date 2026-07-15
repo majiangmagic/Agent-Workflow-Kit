@@ -19,12 +19,15 @@ def _normalized_tag(value: Any) -> str:
 
 def _identity_tags(requirements: Dict[str, Any]) -> tuple[bool, set[str]]:
     identities = requirements.get("character_identities") or []
-    tags = {
-        _normalized_tag(item.get("danbooru_tag"))
-        for item in identities
-        if isinstance(item, dict) and item.get("danbooru_tag")
-    }
-    return bool(identities), {tag for tag in tags if tag}
+    tags = set()
+    for item in identities:
+        if not isinstance(item, dict):
+            continue
+        for value in (item.get("danbooru_tag"), item.get("canonical_name")):
+            tag = _normalized_tag(value)
+            if tag:
+                tags.add(tag)
+    return bool(tags), tags
 
 
 def filter_character_records(
@@ -32,8 +35,8 @@ def filter_character_records(
 ) -> list[Dict[str, Any]]:
     """Reject character-category tags that conflict with the identity contract."""
 
-    has_identities, allowed_identity_tags = _identity_tags(requirements)
-    if not has_identities:
+    has_resolved_identities, allowed_identity_tags = _identity_tags(requirements)
+    if not has_resolved_identities:
         return records
     return [
         record

@@ -59,15 +59,12 @@ def normalize_character_identities(value: Any) -> list[Dict[str, str]]:
 
 
 def validated_identity_tag(identity: Dict[str, str]) -> str:
-    """Accept only a qualified tag consistent with the canonical identity name."""
+    """Accept ordinary Danbooru tag syntax without requiring a series suffix."""
 
     tag = re.sub(r"\s+", "_", identity.get("danbooru_tag", "").strip().lower())
-    canonical = re.sub(
-        r"[^a-z0-9]+", "_", identity.get("canonical_name", "").strip().lower()
-    ).strip("_")
-    if not tag or not canonical or not tag.startswith(f"{canonical}_("):
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_()'.:-]*", tag):
         return ""
-    return tag if tag.endswith(")") else ""
+    return tag
 
 
 def strip_target_model_directive(text: str) -> str:
@@ -219,10 +216,12 @@ async def analyze_node(
         "unmentioned anatomy, identities, actions, absences, defects, or franchises. "
         "For every explicitly named fictional character, character_identities must "
         "contain original_name, canonical_name, series, and danbooru_tag. Resolve the "
-        "official/common English character name and franchise; danbooru_tag must be "
-        "the canonical qualified character tag in name_(series) form. Never substitute "
-        "a different romanized name merely because that tag exists. If uncertain, "
-        "leave danbooru_tag empty instead of guessing. Represent a named character's "
+        "official/common English or romanized character name and franchise. danbooru_tag "
+        "must use the actual Danbooru spelling; it may be an unqualified name or include "
+        "a _(series) suffix when Danbooru needs disambiguation. Never invent a different "
+        "identity merely because a similar tag exists. If the exact tag is uncertain, "
+        "leave danbooru_tag empty but still provide useful romanized lookup candidates. "
+        "Represent a named character's "
         "identity with danbooru_tag; positive_phrases should describe visual relations "
         "using 'the character' rather than respelling the character name. "
         "Do not return or rewrite resolved_request."

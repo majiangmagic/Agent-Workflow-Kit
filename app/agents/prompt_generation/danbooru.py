@@ -125,8 +125,8 @@ async def generate_search_terms(
         "scene": "scene_tag_candidates",
         "additional": "additional_tag_candidates",
     }.get(focus)
-    if candidate_key and candidate_key in requirements:
-        return unique_text(
+    provided_candidates = (
+        unique_text(
             [
                 term
                 for term in requirements.get(candidate_key) or []
@@ -134,6 +134,33 @@ async def generate_search_terms(
             ],
             limit=12,
         )
+        if candidate_key
+        else []
+    )
+    identities = [
+        identity
+        for identity in requirements.get("character_identities") or []
+        if isinstance(identity, dict)
+    ]
+    identity_candidates = unique_text(
+        value
+        for identity in identities
+        for value in (
+            identity.get("danbooru_tag"),
+            identity.get("canonical_name"),
+        )
+        if value
+    )
+    provided_candidates = unique_text(
+        [*identity_candidates, *provided_candidates], limit=12
+    )
+    unresolved_named_identity = (
+        focus == "character"
+        and bool(identities)
+        and not any(identity.get("danbooru_tag") for identity in identities)
+    )
+    if candidate_key and candidate_key in requirements and not unresolved_named_identity:
+        return provided_candidates
 
     lookup_request = render_lookup_request(
         requirements,
@@ -147,7 +174,10 @@ async def generate_search_terms(
         f"{agent_prompt}\n\n"
         "Convert the image request into Danbooru tag lookup candidates for the "
         f"{focus} portion. Return only a JSON array of concise English or romanized "
-        "terms. Preserve explicit adult details accurately. These are search "
+        "terms. For a named character whose exact tag is unresolved, include likely "
+        "official romanized names and Danbooru tag spellings; do not collapse the "
+        "identity to generic tags such as 1girl. Preserve explicit adult details "
+        "accurately. These are search "
         "candidates, not verified final tags."
     )
     try:
@@ -164,7 +194,11 @@ async def generate_search_terms(
     return unique_text(
         [
             term
-            for term in [*fallback_search_terms(requirements, focus), *generated]
+            for term in [
+                *provided_candidates,
+                *fallback_search_terms(requirements, focus),
+                *generated,
+            ]
             if not is_lookup_noise(term)
         ],
         limit=12,

@@ -7,6 +7,7 @@ from app.agents.prompt_generation.natural_language_editor.nodes import resolve_n
 from app.agents.prompt_generation.requirement_analyzer.nodes import (
     analyze_node,
     detect_target_model,
+    validated_identity_tag,
 )
 from app.agents.prompt_generation.character_prompt_generator.nodes import (
     filter_character_records,
@@ -677,6 +678,72 @@ def test_only_verified_records_become_final_tags():
     )
 
     assert tags == ["cave"]
+
+
+def test_unqualified_danbooru_character_tag_is_valid():
+    assert validated_identity_tag(
+        {
+            "canonical_name": "Hatsune Miku",
+            "danbooru_tag": "hatsune_miku",
+        }
+    ) == "hatsune_miku"
+
+
+@pytest.mark.asyncio
+async def test_unresolved_named_character_expands_beyond_generic_candidate(
+    monkeypatch,
+):
+    class IdentityModel:
+        async def ainvoke(self, messages):
+            return AIMessage(content='["moria_luluka", "cure_arcana_shadow"]')
+
+    monkeypatch.setattr(
+        "app.agents.prompt_generation.danbooru.ai_provider.get_model",
+        lambda **kwargs: IdentityModel(),
+    )
+
+    terms = await generate_search_terms(
+        {"model": "test-model", "system_prompt": "", "user_input": ""},
+        {
+            "character": "森亚露露卡",
+            "raw_request": "将角色改成森亚露露卡",
+            "character_identities": [
+                {
+                    "original_name": "森亚露露卡",
+                    "canonical_name": "",
+                    "series": "",
+                    "danbooru_tag": "",
+                }
+            ],
+            "character_tag_candidates": ["1girl"],
+        },
+        "character",
+    )
+
+    assert "1girl" in terms
+    assert "moria_luluka" in terms
+    assert "cure_arcana_shadow" in terms
+
+
+def test_unresolved_identity_does_not_delete_verified_character_record():
+    records = filter_character_records(
+        [
+            {"name": "moria_luluka", "category": 4, "post_count": 2500},
+            {"name": "1girl", "category": 0, "post_count": 8000000},
+        ],
+        {
+            "character_identities": [
+                {
+                    "original_name": "森亚露露卡",
+                    "canonical_name": "",
+                    "series": "",
+                    "danbooru_tag": "",
+                }
+            ]
+        },
+    )
+
+    assert [record["name"] for record in records] == ["moria_luluka", "1girl"]
 
 
 def test_named_character_identity_rejects_unrelated_existing_character_tag():
