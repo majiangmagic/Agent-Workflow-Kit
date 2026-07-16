@@ -57,7 +57,10 @@ function toFlow(data: DslData): { nodes: Node<FlowNodeData>[]; edges: Edge[] } {
   const entries = nodeEntries(data);
   const edges: Edge[] = [];
   (data.edges ?? []).forEach((edge, groupIndex) => {
-    const targets = Array.isArray(edge.to) ? edge.to : [edge.to];
+    const targets = [
+      ...(Array.isArray(edge.to) ? edge.to : [edge.to]),
+      ...(edge.condition && edge.otherwise ? [edge.otherwise] : []),
+    ];
     const sources = Array.isArray(edge.from) ? edge.from : [edge.from];
     for (const source of sources) {
       for (const target of targets) {
@@ -66,32 +69,42 @@ function toFlow(data: DslData): { nodes: Node<FlowNodeData>[]; edges: Edge[] } {
           id: `e-${groupIndex}-${source}-${target}`,
           source,
           target,
-          data: { group: groupIndex },
+          label: edge.condition
+            ? target === edge.otherwise
+              ? "otherwise"
+              : "condition"
+            : undefined,
+          data: {
+            group: groupIndex,
+            conditional: Boolean(edge.condition),
+            branch: target === edge.otherwise ? "otherwise" : "then",
+          },
         });
       }
     }
   });
   const ids = new Set(entries.map(([id]) => id));
-  const incoming = Object.fromEntries(entries.map(([id]) => [id, 0]));
   const outgoing = Object.fromEntries(entries.map(([id]) => [id, [] as string[]]));
   edges.forEach((edge) => {
     if (!ids.has(edge.source) || !ids.has(edge.target)) return;
-    incoming[edge.target] += 1;
     outgoing[edge.source].push(edge.target);
   });
-  const ranks = Object.fromEntries(entries.map(([id]) => [id, 0]));
-  const queue = entries.map(([id]) => id).filter((id) => incoming[id] === 0);
+  const entrypoint = String(data.entrypoint || entries[0]?.[0] || "");
+  const ranks: Record<string, number> = entrypoint ? { [entrypoint]: 0 } : {};
+  const queue = entrypoint ? [entrypoint] : [];
   for (let index = 0; index < queue.length; index += 1) {
     const source = queue[index];
     outgoing[source].forEach((target) => {
-      ranks[target] = Math.max(ranks[target], ranks[source] + 1);
-      incoming[target] -= 1;
-      if (incoming[target] === 0) queue.push(target);
+      const nextRank = (ranks[source] ?? 0) + 1;
+      if (ranks[target] === undefined || nextRank < ranks[target]) {
+        ranks[target] = nextRank;
+        queue.push(target);
+      }
     });
   }
   const rankCounts: Record<number, number> = {};
   const nodes = entries.map(([id, config]) => {
-    const rank = ranks[id];
+    const rank = ranks[id] ?? Math.max(0, ...Object.values(ranks)) + 1;
     const row = rankCounts[rank] ?? 0;
     rankCounts[rank] = row + 1;
     return {
@@ -106,8 +119,25 @@ function toFlow(data: DslData): { nodes: Node<FlowNodeData>[]; edges: Edge[] } {
 function graphIntoDsl(data: DslData, nodes: Node<FlowNodeData>[], edges: Edge[]): DslData {
   const nodeMap = Object.fromEntries(nodes.map((node) => [node.id, node.data.config]));
   const originalEndEdges = (data.edges ?? []).filter((edge) => edge.to === "END");
+  const preservedConditionalEdges = (data.edges ?? []).filter((edge, groupIndex) => {
+    if (!edge.condition || !edge.otherwise) return false;
+    const expectedTargets = new Set([
+      ...(Array.isArray(edge.to) ? edge.to : [edge.to]),
+      edge.otherwise,
+    ]);
+    const currentTargets = new Set(
+      edges
+        .filter((candidate) => candidate.data?.group === groupIndex)
+        .map((candidate) => candidate.target),
+    );
+    return (
+      (Array.isArray(edge.from) ? edge.from : [edge.from]).every((source) => nodeMap[source]) &&
+      [...expectedTargets].every((target) => nodeMap[target] && currentTargets.has(target))
+    );
+  });
   const grouped = new Map<string, { from: string[]; to: string }>();
   edges.forEach((edge) => {
+    if (edge.data?.conditional) return;
     const key = String(edge.data?.group ?? edge.id);
     const item = grouped.get(key) ?? { from: [], to: edge.target };
     if (!item.from.includes(edge.source)) item.from.push(edge.source);
@@ -117,7 +147,11 @@ function graphIntoDsl(data: DslData, nodes: Node<FlowNodeData>[], edges: Edge[])
     from: edge.from.length === 1 ? edge.from[0] : edge.from,
     to: edge.to,
   }));
-  return { ...data, nodes: nodeMap, edges: [...graphEdges, ...originalEndEdges] };
+  return {
+    ...data,
+    nodes: nodeMap,
+    edges: [...graphEdges, ...preservedConditionalEdges, ...originalEndEdges],
+  };
 }
 
 export function DslDesigner({

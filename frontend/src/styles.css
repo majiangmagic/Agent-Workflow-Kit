@@ -168,24 +168,29 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .error-banner span { overflow-wrap: anywhere; }
 .error-banner button { border: 0; background: transparent; color: inherit; font-weight: 750; }
 
-.pipeline { border-bottom: 1px solid #d8dfdb; background: #edf2ef; padding: 11px 24px 13px; }
+.pipeline { border-bottom: 1px solid #d8dfdb; background: #edf2ef; padding: 9px 24px 12px; }
 .pipeline-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .pipeline-head > div { display: flex; align-items: baseline; gap: 8px; }
 .section-label { color: #4d5b55; font-size: 11px; font-weight: 780; }
 .pipeline-head small { color: #87928d; font-size: 10px; }
 .quiet-button, .icon-text-button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: transparent; color: #287c59; padding: 3px; font-size: 10px; }
-.pipeline-track { display: grid; grid-template-columns: repeat(var(--pipeline-columns, 1), minmax(112px, 1fr)); gap: 16px; margin-top: 9px; overflow-x: auto; }
-.stage-column { position: relative; display: grid; align-content: center; gap: 5px; min-width: 112px; }
-.stage-column:not(:last-child)::after { position: absolute; top: 50%; right: -12px; color: #98a49e; content: "→"; transform: translateY(-50%); }
-.stage { display: flex; min-height: 36px; align-items: center; gap: 7px; border: 1px solid #d2dad6; border-radius: 6px; background: #fafcfb; color: #64716b; padding: 7px 9px; font-size: 10px; }
-.stage svg { flex: 0 0 auto; color: #98a49e; }
-.stage span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stage.running { border-color: #d9aa4b; background: #fff8e9; color: #785a1a; }
-.stage.running svg { color: #c78b20; }
-.stage.completed { border-color: #68bd91; background: #edf9f3; color: #176b49; }
-.stage.completed svg { color: #28946a; }
-.stage.error { border-color: #d47e75; background: #fff0ee; color: #943e37; }
-.stage.error svg { color: #c45d53; }
+.runtime-graph { height: 248px; margin-top: 7px; overflow: hidden; border: 1px solid #d5ddda; border-radius: 6px; background: #f7faf8; }
+.runtime-graph .react-flow__controls { overflow: hidden; border: 1px solid #ccd6d1; border-radius: 5px; box-shadow: 0 2px 8px rgba(30, 49, 40, .08); }
+.runtime-graph .react-flow__controls button { width: 24px; height: 24px; border-bottom-color: #dce3df; background: #fff; color: #52615a; }
+.runtime-graph .react-flow__edge-textbg { rx: 3px; ry: 3px; }
+.runtime-node { display: flex; width: 188px; height: 56px; align-items: center; gap: 9px; border: 1px solid #cbd5d0; border-radius: 6px; background: #fff; color: #5b6862; padding: 8px 10px; box-shadow: 0 2px 7px rgba(30, 48, 39, .06); }
+.runtime-node > svg { flex: 0 0 auto; color: #98a49e; }
+.runtime-node > div { min-width: 0; display: grid; gap: 3px; }
+.runtime-node strong, .runtime-node span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: 0; }
+.runtime-node strong { color: inherit; font-size: 10px; }
+.runtime-node span { color: #8a9690; font-size: 8px; }
+.runtime-node.running { border-color: #d4a044; background: #fff8e9; color: #735416; box-shadow: 0 0 0 2px rgba(212, 160, 68, .14); }
+.runtime-node.running > svg { color: #c78b20; }
+.runtime-node.completed { border-color: #5fb789; background: #eef9f3; color: #176b49; }
+.runtime-node.completed > svg { color: #28946a; }
+.runtime-node.error { border-color: #cf756c; background: #fff0ee; color: #913b35; }
+.runtime-node.error > svg { color: #c45d53; }
+.runtime-handle { width: 6px !important; height: 6px !important; border: 1px solid #8fa099 !important; background: #f9fbfa !important; opacity: .75; }
 .pipeline-empty { color: #7b8882; padding: 10px 0 2px; font-size: 11px; }
 .spin { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

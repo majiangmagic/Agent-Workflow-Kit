@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "kind": "agent",
+  "name": "prompt_compiler",
+  "package": "prompt_generation/prompt_compiler",
+  "display_name": "Prompt 编译",
+  "config": {
+    "prompt": "确定性汇总带来源的身份标签、原子标签、关系短语与负向约束，应用修复覆盖并生成 ResolvedPromptIR。",
+    "temperature": 0
+  },
+  "state": {
+    "scene_document": { "type": "dict", "optional": true },
+    "impact_set": { "type": "dict", "optional": true },
+    "identity_terms": { "type": "list", "optional": true },
+    "atomic_terms": { "type": "list", "optional": true },
+    "relation_terms": { "type": "list", "optional": true },
+    "negative_terms": { "type": "list", "optional": true },
+    "identity_tag_records": { "type": "list", "optional": true },
+    "visual_tag_records": { "type": "list", "optional": true },
+    "repair_overlay": { "type": "dict", "optional": true },
+    "resolved_prompt_ir": { "type": "dict", "optional": true },
+    "draft_prompt": { "type": "string", "optional": true },
+    "negative_prompt": { "type": "string", "optional": true }
+  },
+  "entrypoint": "compile_prompt",
+  "nodes": {
+    "compile_prompt": { "handler": "compile_prompt_node" }
+  },
+  "edges": [{ "from": "compile_prompt", "to": "END" }]
+}

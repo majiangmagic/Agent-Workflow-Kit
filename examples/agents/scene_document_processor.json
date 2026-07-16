@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "kind": "agent",
+  "name": "scene_document_processor",
+  "package": "prompt_generation/scene_document_processor",
+  "display_name": "画面工程更新",
+  "config": {
+    "prompt": "确定性校验并执行 SceneDocument Patch，计算本轮影响范围。",
+    "temperature": 0
+  },
+  "state": {
+    "scene_document": { "type": "dict", "optional": true },
+    "previous_scene_document": { "type": "dict", "optional": true },
+    "previous_resolved_prompt_ir": { "type": "dict", "optional": true },
+    "patch_proposal": { "type": "dict", "optional": true },
+    "impact_set": { "type": "dict", "optional": true },
+    "patch_error": { "type": "string", "optional": true }
+  },
+  "entrypoint": "apply_patch",
+  "nodes": {
+    "apply_patch": { "handler": "apply_patch_node" }
+  },
+  "edges": [{ "from": "apply_patch", "to": "END" }]
+}

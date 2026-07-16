@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "kind": "agent",
+  "name": "character_identity_resolver",
+  "package": "prompt_generation/character_identity_resolver",
+  "display_name": "角色身份解析",
+  "config": {
+    "prompt": "解析 SceneDocument 中明确命名角色的规范英文或罗马字名称、作品来源和真实 Danbooru 角色标签候选。不得用相似角色替代，不确定时保留名称并留空标签。",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.1
+  },
+  "state": {
+    "scene_document": { "type": "dict", "optional": true },
+    "previous_resolved_prompt_ir": { "type": "dict", "optional": true },
+    "impact_set": { "type": "dict", "optional": true },
+    "identity_terms": { "type": "list", "optional": true },
+    "identity_tag_records": { "type": "list", "optional": true },
+    "identity_search_terms": { "type": "list", "optional": true }
+  },
+  "entrypoint": "resolve_identities",
+  "nodes": {
+    "resolve_identities": { "handler": "resolve_identities_node" }
+  },
+  "edges": [{ "from": "resolve_identities", "to": "END" }]
+}

@@ -244,3 +244,59 @@ def test_generate_workflow_renders_continue_error_policy(tmp_path, monkeypatch):
     )
     assert "continue_on_error=True" in graph_text
     assert "'on_error': 'continue'" in graph_text
+
+
+def test_generate_workflow_supports_conditional_bounded_loop(tmp_path, monkeypatch):
+    """条件边应生成状态路由，并由状态计数限制循环次数。"""
+
+    workflows_dir = tmp_path / "workflows"
+    monkeypatch.setattr(generate_workflow, "WORKFLOWS_DIR", workflows_dir)
+    dsl_path = tmp_path / "conditional.json"
+    dsl_path.write_text(
+        json.dumps(
+            {
+                "kind": "workflow",
+                "name": "repair_workflow",
+                "nodes": {
+                    "validator": {"agent": "validator"},
+                    "repairer": {"agent": "repairer"},
+                    "renderer": {"agent": "renderer"},
+                },
+                "edges": [
+                    {
+                        "from": "validator",
+                        "to": "repairer",
+                        "otherwise": "renderer",
+                        "condition": {
+                            "path": "nodes.validator.needs_repair",
+                            "operator": "equals",
+                            "value": True,
+                        },
+                        "loop": {
+                            "counter_path": "nodes.repairer.repair_attempts",
+                            "max_iterations": 1,
+                            "exhausted": "renderer",
+                        },
+                    },
+                    {"from": "repairer", "to": "validator"},
+                    {"from": "renderer", "to": "END"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert generate_workflow.main([str(dsl_path)]) == 0
+    graph_text = (workflows_dir / "repair_workflow" / "graph.py").read_text(
+        encoding="utf-8"
+    )
+    assert "create_state_condition_router" in graph_text
+    assert "workflow.add_conditional_edges(" in graph_text
+    assert "path='nodes.validator.needs_repair'" in graph_text
+    assert "counter_path='nodes.repairer.repair_attempts'" in graph_text
+    assert "max_iterations=1" in graph_text
+    assert "source='validator'" in graph_text
+    assert "then_target='repairer'" in graph_text
+    assert "otherwise_target='renderer'" in graph_text
+    assert '"then": \'repairer\'' in graph_text
+    assert '"otherwise": \'renderer\'' in graph_text

@@ -376,7 +376,13 @@ export default function App() {
         </header>
 
         {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError("")} type="button">关闭</button></div>}
-        <Pipeline onClear={stream.clear} statuses={stream.nodeStatuses} workflow={selectedWorkflow} />
+        <Pipeline
+          durations={stream.nodeDurations}
+          onClear={stream.clear}
+          selectedEdges={stream.selectedEdges}
+          statuses={stream.nodeStatuses}
+          workflow={selectedWorkflow}
+        />
         <MessageList
           messages={messages}
           onDeleteLatestTurn={confirmDeleteLatestTurn}

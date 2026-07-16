@@ -102,17 +102,36 @@ def extract_workflow_response(final_state: Dict[str, Any]) -> str:
 
 
 def extract_workflow_memory(final_state: Dict[str, Any]) -> Dict[str, Any]:
-    """提取跨轮规范状态，不保存运行时 Prompt 或模型配置。"""
+    """提取跨轮业务状态，不保存系统提示词或模型配置。"""
 
+    memory: Dict[str, Any] = {}
+    newest_document_version = -1
+    newest_ir_version = -1
     for node_state in (final_state.get("nodes") or {}).values():
+        document = node_state.get("scene_document")
+        if isinstance(document, dict):
+            version = int(document.get("version") or 0)
+            if version >= newest_document_version:
+                memory["scene_document"] = document
+                newest_document_version = version
+        prompt_ir = node_state.get("resolved_prompt_ir")
+        if isinstance(prompt_ir, dict):
+            version = int(prompt_ir.get("document_version") or 0)
+            if version >= newest_ir_version:
+                memory["resolved_prompt_ir"] = prompt_ir
+                newest_ir_version = version
         contract = node_state.get("request_contract")
-        if isinstance(contract, dict) and contract.get("resolved_request"):
-            return {
-                "request_contract": contract,
-                "resolved_user_request": node_state.get("resolved_user_request")
-                or contract["resolved_request"],
-            }
-    return {}
+        if (
+            "scene_document" not in memory
+            and isinstance(contract, dict)
+            and contract.get("resolved_request")
+        ):
+            memory["request_contract"] = contract
+            memory["resolved_user_request"] = (
+                node_state.get("resolved_user_request")
+                or contract["resolved_request"]
+            )
+    return memory
 
 
 def get_supervisor_state(final_state: Dict[str, Any]) -> Dict[str, Any]:

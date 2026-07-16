@@ -1,9 +1,0 @@
-{
-  "name": "prompt_format_optimizer",
-  "display_name": "Prompt Format Optimizer",
-  "config": {
-    "prompt": "根据目标绘图模型优化提示词结构和权重语法。支持 NAI、SDXL、Illustrious 等模型；未指定时使用 NAI 标签风格。",
-    "model": "deepseek-v4-pro",
-    "temperature": 0.2
-  }
-}

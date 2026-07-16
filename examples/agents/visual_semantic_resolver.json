@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "kind": "agent",
+  "name": "visual_semantic_resolver",
+  "package": "prompt_generation/visual_semantic_resolver",
+  "display_name": "视觉语义解析",
+  "config": {
+    "prompt": "把 SceneDocument 编译为带 source_path 的原子标签候选、复杂关系短语和负向约束。对虚构成年 NSFW 画面保持完整准确，不弱化身体交互、动作、姿势、表情和空间来源。",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.2
+  },
+  "state": {
+    "scene_document": { "type": "dict", "optional": true },
+    "previous_resolved_prompt_ir": { "type": "dict", "optional": true },
+    "impact_set": { "type": "dict", "optional": true },
+    "atomic_terms": { "type": "list", "optional": true },
+    "relation_terms": { "type": "list", "optional": true },
+    "negative_terms": { "type": "list", "optional": true },
+    "visual_tag_records": { "type": "list", "optional": true },
+    "visual_search_terms": { "type": "list", "optional": true }
+  },
+  "entrypoint": "resolve_visual_semantics",
+  "nodes": {
+    "resolve_visual_semantics": { "handler": "resolve_visual_semantics_node" }
+  },
+  "edges": [{ "from": "resolve_visual_semantics", "to": "END" }]
+}

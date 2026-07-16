@@ -21,6 +21,8 @@ export type WorkflowNode = {
 export type WorkflowEdge = {
   from: string | string[];
   to: string;
+  conditional?: boolean;
+  branch?: "then" | "otherwise";
 };
 
 export type Workflow = {
@@ -79,9 +81,21 @@ export type WorkflowEvent = {
   type: string;
   node?: string;
   error?: string;
+  from?: string;
+  to?: string;
+  branch?: "then" | "otherwise" | "exhausted";
+  iteration?: number;
+  max_iterations?: number | null;
 };
 
 export type NodeStatus = "idle" | "running" | "completed" | "error";
+export type EdgeSelection = {
+  from: string;
+  to: string;
+  branch: "then" | "otherwise" | "exhausted";
+  iteration: number;
+  maxIterations?: number | null;
+};
 export type WorkflowInputs = Record<string, string>;
 
 export type DslKind = "agent" | "workflow";
@@ -97,5 +111,11 @@ export type DslData = Record<string, unknown> & {
   name: string;
   entrypoint?: string;
   nodes?: Record<string, Record<string, unknown>> | Array<Record<string, unknown>>;
-  edges?: Array<{ from: string | string[]; to: string | string[] }>;
+  edges?: Array<{
+    from: string | string[];
+    to: string | string[];
+    otherwise?: string;
+    condition?: Record<string, unknown>;
+    loop?: Record<string, unknown>;
+  }>;
 };

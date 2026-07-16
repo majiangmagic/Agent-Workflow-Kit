@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "kind": "agent",
+  "name": "prompt_target_renderer",
+  "package": "prompt_generation/prompt_target_renderer",
+  "display_name": "目标模型渲染",
+  "config": {
+    "prompt": "根据目标模型确定性渲染 ResolvedPromptIR，不重新解释用户语义。",
+    "temperature": 0
+  },
+  "state": {
+    "scene_document": { "type": "dict", "optional": true },
+    "resolved_prompt_ir": { "type": "dict", "optional": true },
+    "validation_report": { "type": "dict", "optional": true },
+    "target_model": { "type": "string", "optional": true },
+    "formatted_prompt": { "type": "string", "optional": true },
+    "final_output": { "type": "dict", "optional": true },
+    "answer": { "type": "string", "optional": true }
+  },
+  "entrypoint": "render_prompt",
+  "nodes": {
+    "render_prompt": { "handler": "render_prompt_node" }
+  },
+  "edges": [{ "from": "render_prompt", "to": "END" }]
+}

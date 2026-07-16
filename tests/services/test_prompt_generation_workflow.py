@@ -1,956 +1,350 @@
-"""Tests for the DSL-driven prompt generation workflow."""
+"""Tests for the SceneDocument-based prompt generation workflow."""
 
-from langchain_core.messages import AIMessage, HumanMessage
+from __future__ import annotations
+
+import json
+import uuid
+
 import pytest
+from langchain_core.messages import AIMessage
 
-from app.agents.prompt_generation.natural_language_editor.nodes import resolve_node
-from app.agents.prompt_generation.requirement_analyzer.nodes import (
-    analyze_node,
-    detect_target_model,
-    validated_identity_tag,
+from app.agents.catalog import resolve_workflow_agent_configs
+from app.agents.prompt_generation.domain import (
+    apply_patch_proposal,
+    collect_required_paths,
+    compute_impact_set,
+    empty_scene_document,
+    normalize_scene_document,
+    validate_patch_proposal,
 )
-from app.agents.prompt_generation.character_prompt_generator.nodes import (
-    filter_character_records,
+from app.agents.prompt_generation.prompt_compiler.nodes import compile_prompt_node
+from app.agents.prompt_generation.prompt_consistency_validator.nodes import (
+    validate_prompt_node,
 )
-from app.agents.prompt_generation.format_optimizer.nodes import optimize_format_node
-from app.agents.prompt_generation.prompt_aggregator.nodes import aggregate_prompt_node
-from app.agents.prompt_generation.danbooru import (
-    generate_search_terms,
-    verified_tags_from_records,
-)
+from app.agents.prompt_generation.prompt_target_renderer.nodes import render_prompt_node
+from app.api.routes.conversation import extract_workflow_memory
 from app.core.langgraph.workflows.prompt_generation_workflow.graph import (
+    WORKFLOW_METADATA,
     create_prompt_generation_workflow_graph,
 )
 from app.core.langgraph.workflows.prompt_generation_workflow.state import build_initial_state
-from app.services.ai_provider import AIProvider
 
 
-def prompt_generation_agents():
-    names = [
-        "official_supervisor",
-        "natural_language_editor",
-        "prompt_requirement_analyzer",
-        "character_prompt_generator",
-        "scene_prompt_generator",
-        "additional_prompt_generator",
-        "prompt_aggregator",
-        "prompt_format_optimizer",
-    ]
-    return [
+def sample_document(name: str = "Hatsune Miku", version: int = 1):
+    return normalize_scene_document(
         {
-            "id": f"agent-{name}",
-            "name": name,
-            "description": f"Runtime config for {name}.",
-            "system_prompt": f"Run {name}.",
-            "model": "test-model",
-            "temperature": 0.2,
-            "tools": [],
+            "summary": f"{name} walking on a street",
+            "participants": {
+                "character_1": {
+                    "adult": True,
+                    "identity": {"input_name": name},
+                    "actions": ["walking"],
+                }
+            },
+            "environment": {"location": "street"},
+            "relations": {
+                "relation_1": {
+                    "subject": "external_hand",
+                    "predicate": "pull",
+                    "object": "character_1",
+                    "instrument": "rope",
+                }
+            },
+        },
+        version=version,
+    )
+
+
+def runtime_agents():
+    return resolve_workflow_agent_configs(WORKFLOW_METADATA)
+
+
+def test_patch_replaces_identity_without_rewriting_bound_actions_or_relations():
+    document = sample_document()
+    proposal = validate_patch_proposal(
+        {
+            "base_version": 1,
+            "intent": "replace_character",
+            "operations": [
+                {
+                    "op": "replace",
+                    "path": "/participants/character_1/identity",
+                    "value": {"input_name": "Moria Luluka"},
+                }
+            ],
+        },
+        1,
+    )
+
+    updated = apply_patch_proposal(document, proposal)
+
+    assert updated["version"] == 2
+    assert updated["participants"]["character_1"]["identity"]["input_name"] == "Moria Luluka"
+    assert updated["participants"]["character_1"]["actions"] == ["walking"]
+    assert updated["relations"]["relation_1"]["object"] == "character_1"
+
+
+def test_patch_rejects_dangling_participant_relations():
+    document = sample_document()
+    proposal = validate_patch_proposal(
+        {
+            "base_version": 1,
+            "operations": [
+                {"op": "remove", "path": "/participants/character_1"}
+            ],
+        },
+        1,
+    )
+
+    with pytest.raises(ValueError, match="missing participant"):
+        apply_patch_proposal(document, proposal)
+
+
+def test_identity_only_change_does_not_invalidate_visual_resolution():
+    previous = sample_document()
+    current = sample_document("Moria Luluka", version=2)
+
+    impact = compute_impact_set(previous, current)
+
+    assert impact["identity_changed"] is True
+    assert impact["visual_changed"] is False
+    assert "Hatsune Miku" in impact["removed_identity_terms"]
+
+
+def test_document_normalization_removes_identity_duplicates_from_requirements():
+    document = normalize_scene_document(
+        {
+            "participants": {
+                "character_1": {"identity": {"input_name": "Hatsune Miku"}}
+            },
+            "requirements": {
+                "positive": ["Hatsune Miku", "standing"],
+                "required": ["Hatsune Miku", "full body"],
+            },
         }
-        for name in names
-    ]
+    )
+
+    assert document["requirements"]["positive"] == ["standing"]
+    assert document["requirements"]["required"] == ["full body"]
 
 
-def test_nai_version_detection_accepts_ui_and_natural_language_forms():
-    assert detect_target_model("目标模型：nai_v3") == "nai_v3"
-    assert detect_target_model("use NAI V4") == "nai_v4"
-    assert detect_target_model("未指定模型") == "nai_v4"
+def test_compiler_removes_old_identity_and_applies_repair_overlay():
+    result = compile_prompt_node(
+        {
+            "scene_document": sample_document("Moria Luluka", version=2),
+            "impact_set": {"removed_identity_terms": ["hatsune_miku"]},
+            "identity_terms": [
+                {"value": "moria_luluka", "source_path": "/participants/character_1/identity"},
+                {"value": "hatsune_miku", "source_path": "/participants/character_1/identity"},
+            ],
+            "atomic_terms": [{"value": "street", "source_path": "/environment/location"}],
+            "relation_terms": [],
+            "negative_terms": [{"value": "text", "source_path": "/requirements/negative/0"}],
+            "identity_tag_records": [],
+            "visual_tag_records": [],
+            "repair_overlay": {
+                "remove_positive": ["street"],
+                "add_positive": [
+                    {"value": "city street", "source_path": "/environment/location"}
+                ],
+            },
+        }
+    )
+    values = [item["value"] for item in result["resolved_prompt_ir"]["positive_terms"]]
+
+    assert "moria_luluka" in values
+    assert "hatsune_miku" not in values
+    assert "street" not in values
+    assert "city street" in values
+
+
+def test_validator_reports_missing_paths_and_polarity_conflicts():
+    document = sample_document()
+    result = validate_prompt_node(
+        {
+            "scene_document": document,
+            "impact_set": {"removed_identity_terms": []},
+            "resolved_prompt_ir": {
+                "positive_terms": [{"value": "street", "source_path": "/environment/location"}],
+                "compiled_negative_terms": [{"value": "street", "source_path": "/requirements/negative/0"}],
+                "covered_paths": ["/environment/location"],
+            },
+        }
+    )
+
+    assert result["needs_repair"] is True
+    assert "positive_negative_conflict" in result["validation_report"]["issues"]
+    assert set(result["validation_report"]["missing_paths"]) == (
+        set(collect_required_paths(document)) - {"/environment/location"}
+    )
+
+
+def test_renderer_keeps_phrases_for_nai_v4_but_not_nai_v3():
+    state = {
+        "scene_document": sample_document(),
+        "resolved_prompt_ir": {
+            "positive_terms": [
+                {"value": "hatsune_miku", "kind": "verified_identity_tag"},
+                {"value": "a hand pulling her by a rope", "kind": "relation_phrase"},
+            ],
+            "compiled_negative_terms": [],
+            "danbooru_tag_records": [{"name": "hatsune_miku"}],
+        },
+        "validation_report": {"valid": True},
+    }
+    v4 = render_prompt_node({**state, "workflow_inputs": {"target_model": "nai_v4"}})
+    v3 = render_prompt_node({**state, "workflow_inputs": {"target_model": "nai_v3"}})
+
+    assert "a hand pulling her by a rope" in v4["final_output"]["positive_prompt"]
+    assert "a hand pulling her by a rope" not in v3["final_output"]["positive_prompt"]
+    assert "hatsune_miku" in v3["final_output"]["positive_prompt"]
+
+
+class WorkflowModel:
+    """Deterministic structured responses for two workflow turns."""
+
+    async def ainvoke(self, messages):
+        system = str(messages[0].content)
+        payload = str(messages[-1].content)
+        if "base_version" in system and "SceneDocument" in system:
+            if "replace character" in payload:
+                content = {
+                    "base_version": 1,
+                    "intent": "replace_character",
+                    "operations": [
+                        {
+                            "op": "replace",
+                            "path": "/participants/character_1/identity",
+                            "value": {"input_name": "Moria Luluka"},
+                            "evidence": "replace character",
+                        }
+                    ],
+                }
+            else:
+                document = sample_document(version=0)
+                document.pop("version", None)
+                document["relations"] = {}
+                content = {
+                    "base_version": 0,
+                    "intent": "create",
+                    "operations": [{"op": "replace", "path": "/", "value": document}],
+                }
+            return AIMessage(content=json.dumps(content))
+        if "danbooru_tag_candidates" in system:
+            name = "Moria Luluka" if "Moria Luluka" in payload else "Hatsune Miku"
+            tag = "moria_luluka" if name == "Moria Luluka" else "hatsune_miku"
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "identities": [
+                            {
+                                "participant_id": "character_1",
+                                "input_name": name,
+                                "canonical_name": name,
+                                "series": "test",
+                                "danbooru_tag_candidates": [tag],
+                            }
+                        ]
+                    }
+                )
+            )
+        if "atomic_facts" in system:
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "atomic_facts": [
+                            {
+                                "source_path": "/participants/character_1/actions/0",
+                                "candidates": ["walking"],
+                                "fallback_phrase": "walking",
+                            },
+                            {
+                                "source_path": "/environment/location",
+                                "candidates": ["street"],
+                                "fallback_phrase": "street",
+                            },
+                        ],
+                        "relation_facts": [],
+                        "negative_facts": [],
+                    }
+                )
+            )
+        return AIMessage(content="{}")
 
 
 @pytest.mark.asyncio
-async def test_requirement_analyzer_keeps_expressive_and_faithful_prompts_separate(
-    monkeypatch,
-):
-    prompts = []
-
-    class CaptureModel:
-        async def ainvoke(self, messages):
-            prompts.append(str(messages[0].content))
-            return AIMessage(content="{}")
-
+async def test_workflow_replaces_character_across_turns_without_reparsing_visuals(monkeypatch):
     monkeypatch.setattr(
         "app.services.ai_provider.ai_provider.get_model",
-        lambda **kwargs: CaptureModel(),
-    )
-    base_state = {
-        "user_input": "a character standing inside a crystal cave",
-        "resolved_user_request": "a character standing inside a crystal cave",
-        "request_contract": {
-            "required_elements": ["character", "crystal cave"],
-            "spatial_relations": ["character inside cave"],
-        },
-        "editor_succeeded": True,
-        "model": "test-model",
-        "system_prompt": "Analyze faithfully.",
-    }
-
-    expressive = await analyze_node(
-        {
-            **base_state,
-            "workflow_inputs": {
-                "prompt_strategy": "expressive",
-                "target_model": "sdxl",
-            },
-        }
-    )
-    faithful = await analyze_node(
-        {
-            **base_state,
-            "workflow_inputs": {
-                "prompt_strategy": "faithful",
-                "target_model": "nai_v4",
-            },
-        }
+        lambda **kwargs: WorkflowModel(),
     )
 
-    assert "Faithful strategy is active" not in prompts[0]
-    assert "Faithful strategy is active" in prompts[1]
-    assert expressive["requirements_json"]["prompt_strategy"] == "expressive"
-    assert expressive["requirements_json"]["target_model"] == "sdxl"
-    assert faithful["requirements_json"]["prompt_strategy"] == "faithful"
-
-
-def patch_model_nodes(monkeypatch, records_by_focus):
-    """Keep workflow tests offline while exercising the real graph topology."""
-
-    def fake_supervisor_invoke(self, state, config=None):
-        return {
-            **state,
-            "messages": [AIMessage(content="规划完成", name="supervisor")],
-            "user_input": None,
-        }
-
-    async def fake_lookup(state, focus):
-        records = records_by_focus.get(focus, [])
-        return [record["name"] for record in records], records
-
-    class FakeRequirementsModel:
-        async def ainvoke(self, messages):
-            return AIMessage(
-                content=(
-                    '{"character":"warrior","scene":"ruins",'
-                    '"style":"anime","negative":"extra fingers"}'
-                )
-            )
+    async def query_records(terms, limit=24):
+        return [
+            {
+                "name": term,
+                "category": 4 if term in {"hatsune_miku", "moria_luluka"} else 0,
+                "post_count": 100,
+            }
+            for term in terms
+        ]
 
     monkeypatch.setattr(
-        "app.agents.official_supervisor.official_runtime.OfficialSupervisorRuntime.invoke",
-        fake_supervisor_invoke,
+        "app.agents.prompt_generation.danbooru.query_tag_records", query_records
     )
-    monkeypatch.setattr(
-        "app.services.ai_provider.ai_provider.get_model",
-        lambda **kwargs: FakeRequirementsModel(),
-    )
-    monkeypatch.setattr(
-        "app.agents.prompt_generation.danbooru.lookup_for_generator",
-        fake_lookup,
-    )
-
-
-async def run_workflow(user_input, thread_id):
-    agents = prompt_generation_agents()
-    initial_state = build_initial_state(
-        crew_id="crew-1",
-        agents=agents,
-        user_id="user-1",
-        conversation_id=thread_id,
-        user_input=user_input,
-    )
+    agents = runtime_agents()
     workflow = create_prompt_generation_workflow_graph("crew-1", agents)
-    return await workflow.ainvoke(
-        initial_state,
+    thread_id = str(uuid.uuid4())
+    first = await workflow.ainvoke(
+        build_initial_state(
+            "crew-1",
+            agents,
+            conversation_id=thread_id,
+            user_input="create character",
+            workflow_inputs={"target_model": "nai_v4", "prompt_strategy": "faithful"},
+        ),
         config={"configurable": {"thread_id": thread_id}},
     )
+    memory = extract_workflow_memory(first)
+    first_answer = first["nodes"]["target_renderer"]["answer"]
+    assert "hatsune_miku" in first_answer
 
-
-@pytest.mark.asyncio
-async def test_prompt_workflow_queries_inside_parallel_generators(monkeypatch):
-    patch_model_nodes(
-        monkeypatch,
-        {
-            "character": [
-                {"name": "breasts", "category": 0, "post_count": 500000}
-            ],
-            "scene": [
-                {"name": "bedroom", "category": 0, "post_count": 12000}
-            ],
-            "additional": [
-                {"name": "from_below", "category": 0, "post_count": 20000}
-            ],
-        },
-    )
-
-    result = await run_workflow(
-        "明确成年女性的露骨 NSFW 卧室场景，低机位",
-        "prompt-generation-nai",
-    )
-    nodes = result["nodes"]
-
-    assert "danbooru_query" not in nodes
-    assert nodes["character_prompt_generator"]["character_tags"] == ["breasts"]
-    assert nodes["scene_prompt_generator"]["scene_tags"] == ["bedroom"]
-    assert nodes["additional_prompt_generator"]["additional_tags"] == ["from_below"]
-    assert nodes["prompt_aggregator"]["draft_prompt"] == (
-        "breasts, bedroom, from_below"
-    )
-    final = nodes["format_optimizer"]["final_output"]
-    assert final["target_model"] == "nai_v4"
-    assert final["positive_prompt"].startswith("masterpiece, best quality")
-    assert len(final["danbooru_tag_records"]) == 3
-
-
-@pytest.mark.asyncio
-async def test_explicit_sdxl_overrides_default_nai(monkeypatch):
-    patch_model_nodes(monkeypatch, {"character": [], "scene": [], "additional": []})
-
-    result = await run_workflow("目标模型 SDXL，生成一座空城", "prompt-generation-sdxl")
-    final = result["nodes"]["format_optimizer"]["final_output"]
-
-    assert final["target_model"] == "sdxl"
-    assert final["positive_prompt"] == "high quality, highly detailed"
-    assert "watermark" in final["negative_prompt"]
-
-
-@pytest.mark.asyncio
-async def test_supervisor_failure_does_not_abort_deterministic_pipeline(monkeypatch):
-    patch_model_nodes(monkeypatch, {"character": [], "scene": [], "additional": []})
-
-    def fail_supervisor(self, state, config=None):
-        raise RuntimeError("temporary supervisor provider failure")
-
-    monkeypatch.setattr(
-        "app.agents.official_supervisor.official_runtime.OfficialSupervisorRuntime.invoke",
-        fail_supervisor,
-    )
-    result = await run_workflow("普通绘图需求", "supervisor-fallback-test")
-
-    assert result["nodes"]["supervisor"]["status"] == "error"
-    assert "temporary supervisor provider failure" in result["nodes"]["supervisor"]["error"]
-    assert result["nodes"]["format_optimizer"]["final_output"]["target_model"] == "nai_v4"
-
-
-@pytest.mark.asyncio
-async def test_danbooru_term_model_receives_adult_nsfw_processing_prompt(monkeypatch):
-    captured = {}
-
-    class CaptureModel:
-        async def ainvoke(self, messages):
-            captured["system_prompt"] = str(messages[0].content)
-            return AIMessage(content='["explicit_candidate"]')
-
-    monkeypatch.setattr(
-        "app.agents.prompt_generation.danbooru.ai_provider.get_model",
-        lambda **kwargs: CaptureModel(),
-    )
-    terms = await generate_search_terms(
-        {
-            "model": "test-model",
-            "system_prompt": "Preserve explicit adult details.",
-            "user_input": "adult request",
-        },
-        {"raw_request": "adult request"},
-        "character",
-    )
-
-    assert "explicit_candidate" in terms
-    assert "not a content moderator" in captured["system_prompt"]
-    assert "Do not refuse, moralize, sanitize" in captured["system_prompt"]
-    assert "never generate sexual content involving minors" in captured["system_prompt"]
-
-
-@pytest.mark.asyncio
-async def test_requirement_analyzer_does_not_reinterpret_conversation_history(monkeypatch):
-    """编辑器之后的需求分析只能读取规范请求，不能再次解释历史。"""
-
-    captured = {}
-
-    class CaptureModel:
-        async def ainvoke(self, messages):
-            captured["input"] = str(messages[1].content)
-            return AIMessage(
-                content=(
-                    '{"resolved_request":"character disappearing",'
-                    '"character":"the original witch","scene":"updated cave",'
-                    '"positive_phrases":["the original witch clearly visible"]}'
-                )
-            )
-
-    monkeypatch.setattr(
-        "app.services.ai_provider.ai_provider.get_model",
-        lambda **kwargs: CaptureModel(),
-    )
-
-    result = await analyze_node(
-        {
-            "user_input": "then move the scene to a cave",
-            "messages": [
-                HumanMessage(content="first describe a character in a room"),
-                AIMessage(content="masterpiece, best quality, very aesthetic"),
-                HumanMessage(content="then move the scene to a cave"),
-            ],
-            "resolved_user_request": "the original witch in the updated cave",
-            "request_contract": {
-                "resolved_request": "the original witch in the updated cave",
-                "required_elements": ["the original witch"],
-                "forbidden_elements": [],
-                "spatial_relations": [],
-                "positive_constraints": [],
-                "negative_constraints": [],
-            },
-            "editor_succeeded": True,
-            "system_prompt": "Analyze the request.",
-            "model": "test-model",
-            "temperature": 0.2,
-        }
-    )
-
-    assert "Authoritative request contract:" in captured["input"]
-    assert "first describe a character in a room" not in captured["input"]
-    assert "then move the scene to a cave" not in captured["input"]
-    assert "masterpiece, best quality, very aesthetic" not in captured["input"]
-    assert result["requirements_json"]["character"] == "the original witch"
-    assert result["requirements_json"]["scene"] == "updated cave"
-    assert result["requirements_json"]["latest_user_input"] == "then move the scene to a cave"
-    assert result["requirements_json"]["raw_request"] == (
-        "the original witch in the updated cave"
-    )
-
-
-@pytest.mark.asyncio
-async def test_natural_language_editor_resolves_colloquial_edit_without_prompt_feedback(
-    monkeypatch,
-):
-    """口语理解层应维护完整请求，同时忽略上一轮生成的 Prompt。"""
-
-    captured = {}
-
-    class EditorModel:
-        async def ainvoke(self, messages):
-            captured["system"] = str(messages[0].content)
-            captured["input"] = str(messages[1].content)
-            return AIMessage(
-                content=(
-                    '{"turn_intent":"restore_and_confirm",'
-                    '"edit_operations":[{"op":"retain","target":"character",'
-                    '"value":"the original witch","evidence":"still the witch?"}],'
-                    '"resolved_user_request":"the original witch in the updated cave",'
-                    '"request_contract":{"resolved_request":'
-                    '"the original witch in the updated cave",'
-                    '"required_elements":["the original witch"],'
-                    '"forbidden_elements":[],"spatial_relations":[], '
-                    '"positive_constraints":[],"negative_constraints":[]}}'
-                )
-            )
-
-    monkeypatch.setattr(
-        "app.services.ai_provider.ai_provider.get_model",
-        lambda **kwargs: EditorModel(),
-    )
-
-    result = await resolve_node(
-        {
-            "user_input": "still the witch?",
-            "messages": [
-                HumanMessage(content="the witch in a room"),
-                AIMessage(content="masterpiece, best quality, unrelated_tag"),
-                HumanMessage(content="move the scene to a cave"),
-                HumanMessage(content="still the witch?"),
-            ],
-            "system_prompt": "Resolve ordinary conversational edits.",
-            "model": "test-model",
-            "temperature": 0.1,
-        }
-    )
-
-    assert "the witch in a room" in captured["input"]
-    assert "move the scene to a cave" in captured["input"]
-    assert "masterpiece, best quality, unrelated_tag" not in captured["input"]
-    assert "具体短语" in captured["system"]
-    assert result["turn_intent"] == "restore_and_confirm"
-    assert result["editor_succeeded"] is True
-    assert result["resolved_user_request"] == (
-        "the original witch in the updated cave"
-    )
-    assert result["request_contract"]["required_elements"] == [
-        "the original witch"
-    ]
-
-
-@pytest.mark.asyncio
-async def test_natural_language_editor_inherits_anchors_omitted_by_model(monkeypatch):
-    """后续模型即使漏字段，也不能让既有角色、禁止项和空间关系消失。"""
-
-    previous_contract = {
-        "resolved_request": "the witch in a cave",
-        "required_elements": ["the witch"],
-        "forbidden_elements": ["floating props"],
-        "spatial_relations": ["vines extend from cave walls"],
-        "positive_constraints": [],
-        "negative_constraints": [],
-    }
-
-    class ForgetfulModel:
-        async def ainvoke(self, messages):
-            return AIMessage(
-                content=(
-                    '{"turn_intent":"restore_visibility","edit_operations":[],'
-                    '"resolved_user_request":"the cave remains",'
-                    '"request_contract":{"resolved_request":"the cave remains",'
-                    '"required_elements":[],"forbidden_elements":[],'
-                    '"spatial_relations":[],"positive_constraints":[],'
-                    '"negative_constraints":[]}}'
-                )
-            )
-
-    monkeypatch.setattr(
-        "app.services.ai_provider.ai_provider.get_model",
-        lambda **kwargs: ForgetfulModel(),
-    )
-    result = await resolve_node(
-        {
-            "user_input": "the witch disappeared",
-            "messages": [
+    second = await workflow.ainvoke(
+        build_initial_state(
+            "crew-1",
+            agents,
+            conversation_id=thread_id,
+            user_input="replace character",
+            messages=[
                 AIMessage(
-                    content="previous output",
-                    additional_kwargs={
-                        "workflow_memory": {"request_contract": previous_contract}
-                    },
-                ),
-                HumanMessage(content="the witch disappeared"),
-            ],
-            "system_prompt": "Resolve edits.",
-            "model": "test-model",
-            "temperature": 0.1,
-        }
-    )
-
-    contract = result["request_contract"]
-    assert contract["required_elements"] == ["the witch"]
-    assert contract["forbidden_elements"] == ["floating props"]
-    assert contract["spatial_relations"] == ["vines extend from cave walls"]
-    assert "the witch" in result["resolved_user_request"]
-
-
-@pytest.mark.asyncio
-async def test_natural_language_editor_allows_explicit_anchor_removal(monkeypatch):
-    """锚点保护不能阻止用户明确删除已有元素。"""
-
-    class RemovalModel:
-        async def ainvoke(self, messages):
-            return AIMessage(
-                content=(
-                    '{"turn_intent":"remove","edit_operations":['
-                    '{"op":"remove","target":"the witch","value":""}],'
-                    '"resolved_user_request":"an empty cave",'
-                    '"request_contract":{"resolved_request":"an empty cave",'
-                    '"required_elements":[],"forbidden_elements":[],'
-                    '"spatial_relations":[],"positive_constraints":[],'
-                    '"negative_constraints":[]}}'
+                    content=first_answer,
+                    additional_kwargs={"workflow_memory": memory},
                 )
-            )
-
-    monkeypatch.setattr(
-        "app.services.ai_provider.ai_provider.get_model",
-        lambda **kwargs: RemovalModel(),
-    )
-    result = await resolve_node(
-        {
-            "user_input": "remove the witch",
-            "messages": [
-                AIMessage(
-                    content="previous output",
-                    additional_kwargs={
-                        "workflow_memory": {
-                            "request_contract": {
-                                "resolved_request": "the witch in a cave",
-                                "required_elements": ["the witch"],
-                                "forbidden_elements": [],
-                                "spatial_relations": [],
-                                "positive_constraints": [],
-                                "negative_constraints": [],
-                            }
-                        }
-                    },
-                ),
-                HumanMessage(content="remove the witch"),
             ],
-            "system_prompt": "Resolve edits.",
-            "model": "test-model",
-            "temperature": 0.1,
+            workflow_inputs={"target_model": "nai_v4", "prompt_strategy": "faithful"},
+        ),
+        config={"configurable": {"thread_id": thread_id}},
+    )
+    answer = second["nodes"]["target_renderer"]["answer"]
+    impact = second["nodes"]["scene_document_processor"]["impact_set"]
+
+    assert "moria_luluka" in answer
+    assert "hatsune_miku" not in answer
+    assert "walking" in answer and "street" in answer
+    assert impact["identity_changed"] is True
+    assert impact["visual_changed"] is False
+
+
+def test_extract_workflow_memory_prefers_scene_document_contract():
+    document = sample_document(version=3)
+    memory = extract_workflow_memory(
+        {
+            "nodes": {
+                "processor": {"scene_document": document},
+                "compiler": {"resolved_prompt_ir": {"document_version": 3}},
+            }
         }
     )
 
-    assert result["request_contract"]["required_elements"] == []
-    assert result["resolved_user_request"] == "an empty cave"
-
-
-@pytest.mark.asyncio
-async def test_natural_language_editor_replaces_character_without_reinheriting_old_one(
-    monkeypatch,
-):
-    """明确替换应采用完整新契约，旧角色及其关系不能被锚点保护补回。"""
-
-    previous_contract = {
-        "resolved_request": "old character walking on a street",
-        "required_elements": ["old character", "street", "walking"],
-        "forbidden_elements": [],
-        "spatial_relations": ["rope attached to old character"],
-        "positive_constraints": ["full body"],
-        "negative_constraints": [],
-    }
-
-    class ReplacementModel:
-        async def ainvoke(self, messages):
-            return AIMessage(
-                content=(
-                    '{"turn_intent":"replace_character","edit_operations":['
-                    '{"op":"replace","target":"character",'
-                    '"value":"new character"}],'
-                    '"resolved_user_request":"new character walking on a street",'
-                    '"request_contract":{"resolved_request":'
-                    '"new character walking on a street",'
-                    '"required_elements":["new character","street","walking"],'
-                    '"forbidden_elements":[],"spatial_relations":['
-                    '"rope attached to new character"],'
-                    '"positive_constraints":["full body"],'
-                    '"negative_constraints":[]}}'
-                )
-            )
-
-    monkeypatch.setattr(
-        "app.services.ai_provider.ai_provider.get_model",
-        lambda **kwargs: ReplacementModel(),
-    )
-    result = await resolve_node(
-        {
-            "user_input": "replace the character with new character",
-            "messages": [
-                AIMessage(
-                    content="previous output",
-                    additional_kwargs={
-                        "workflow_memory": {"request_contract": previous_contract}
-                    },
-                ),
-                HumanMessage(content="replace the character with new character"),
-            ],
-            "system_prompt": "Resolve edits.",
-            "model": AIProvider.SUPERVISOR_MODEL,
-            "temperature": 0.1,
-        }
-    )
-
-    contract = result["request_contract"]
-    assert contract["required_elements"] == ["new character", "street", "walking"]
-    assert contract["spatial_relations"] == ["rope attached to new character"]
-    assert "old character" not in result["resolved_user_request"]
-
-
-@pytest.mark.asyncio
-async def test_natural_language_editor_removal_matches_operation_value(monkeypatch):
-    """target 是字段名时，也要按 value 删除对应旧锚点。"""
-
-    class RemovalModel:
-        async def ainvoke(self, messages):
-            return AIMessage(
-                content=(
-                    '{"turn_intent":"remove","edit_operations":['
-                    '{"op":"remove","target":"required_elements",'
-                    '"value":"old character"}],'
-                    '"resolved_user_request":"an empty street",'
-                    '"request_contract":{"resolved_request":"an empty street",'
-                    '"required_elements":["street"],"forbidden_elements":[],'
-                    '"spatial_relations":[],"positive_constraints":[],'
-                    '"negative_constraints":[]}}'
-                )
-            )
-
-    monkeypatch.setattr(
-        "app.services.ai_provider.ai_provider.get_model",
-        lambda **kwargs: RemovalModel(),
-    )
-    result = await resolve_node(
-        {
-            "user_input": "remove old character",
-            "messages": [
-                AIMessage(
-                    content="previous output",
-                    additional_kwargs={
-                        "workflow_memory": {
-                            "request_contract": {
-                                "resolved_request": "old character on a street",
-                                "required_elements": ["old character", "street"],
-                                "forbidden_elements": [],
-                                "spatial_relations": [],
-                                "positive_constraints": [],
-                                "negative_constraints": [],
-                            }
-                        }
-                    },
-                ),
-                HumanMessage(content="remove old character"),
-            ],
-            "system_prompt": "Resolve edits.",
-            "model": AIProvider.SUPERVISOR_MODEL,
-            "temperature": 0.1,
-        }
-    )
-
-    assert result["request_contract"]["required_elements"] == ["street"]
-
-
-@pytest.mark.asyncio
-async def test_destructive_edit_is_reviewed_by_supervisor_model(monkeypatch):
-    """快速模型尝试破坏锚点时，必须经过强模型语义复核。"""
-
-    calls = []
-
-    class FastModel:
-        async def ainvoke(self, messages):
-            return AIMessage(
-                content=(
-                    '{"turn_intent":"remove","edit_operations":['
-                    '{"op":"remove","target":"the witch","value":""}],'
-                    '"resolved_user_request":"an empty cave",'
-                    '"request_contract":{"resolved_request":"an empty cave",'
-                    '"required_elements":[],"forbidden_elements":[],'
-                    '"spatial_relations":[],"positive_constraints":[],'
-                    '"negative_constraints":[]}}'
-                )
-            )
-
-    class ReviewModel:
-        async def ainvoke(self, messages):
-            return AIMessage(
-                content=(
-                    '{"turn_intent":"restore","edit_operations":['
-                    '{"op":"retain","target":"the witch","value":"visible"}],'
-                    '"resolved_user_request":"the witch clearly visible in the cave",'
-                    '"request_contract":{"resolved_request":'
-                    '"the witch clearly visible in the cave",'
-                    '"required_elements":["the witch"],"forbidden_elements":[],'
-                    '"spatial_relations":[],"positive_constraints":[],'
-                    '"negative_constraints":[]}}'
-                )
-            )
-
-    def model_factory(**kwargs):
-        calls.append(kwargs["model_name"])
-        return ReviewModel() if kwargs["model_name"] != "fast-model" else FastModel()
-
-    monkeypatch.setattr(
-        "app.services.ai_provider.ai_provider.get_model",
-        model_factory,
-    )
-    result = await resolve_node(
-        {
-            "user_input": "the witch is missing",
-            "messages": [
-                AIMessage(
-                    content="previous output",
-                    additional_kwargs={
-                        "workflow_memory": {
-                            "request_contract": {
-                                "resolved_request": "the witch in a cave",
-                                "required_elements": ["the witch"],
-                                "forbidden_elements": [],
-                                "spatial_relations": [],
-                                "positive_constraints": [],
-                                "negative_constraints": [],
-                            }
-                        }
-                    },
-                ),
-                HumanMessage(content="the witch is missing"),
-            ],
-            "system_prompt": "Resolve edits.",
-            "model": "fast-model",
-            "temperature": 0.1,
-        }
-    )
-
-    assert calls == ["fast-model", AIProvider.SUPERVISOR_MODEL]
-    assert result["request_contract"]["required_elements"] == ["the witch"]
-    assert result["resolved_user_request"] == "the witch clearly visible in the cave"
-
-
-@pytest.mark.asyncio
-async def test_requirement_analyzer_prefers_editor_resolved_request(monkeypatch):
-    """需求分析只拆分完整请求，不应把最后一句口语当成完整需求。"""
-
-    captured = {}
-
-    class AnalyzerModel:
-        async def ainvoke(self, messages):
-            captured["input"] = str(messages[1].content)
-            return AIMessage(
-                content=(
-                    '{"resolved_request":"the original witch in the updated cave",'
-                    '"character":"the original witch","scene":"updated cave"}'
-                )
-            )
-
-    monkeypatch.setattr(
-        "app.services.ai_provider.ai_provider.get_model",
-        lambda **kwargs: AnalyzerModel(),
-    )
-
-    result = await analyze_node(
-        {
-            "user_input": "still the witch?",
-            "messages": [HumanMessage(content="still the witch?")],
-            "resolved_user_request": "the original witch in the updated cave",
-            "request_contract": {
-                "resolved_request": "the original witch in the updated cave",
-                "required_elements": ["the original witch"],
-                "forbidden_elements": [],
-                "spatial_relations": [],
-                "positive_constraints": [],
-                "negative_constraints": [],
-            },
-            "editor_succeeded": True,
-            "system_prompt": "Split the complete request.",
-            "model": "test-model",
-            "temperature": 0.2,
-        }
-    )
-
-    assert "Authoritative resolved request:\nthe original witch in the updated cave" in captured[
-        "input"
-    ]
-    assert "still the witch?" not in captured["input"]
-    assert result["requirements_json"]["character"] == "the original witch"
-    assert result["requirements_json"]["latest_user_input"] == "still the witch?"
-
-
-@pytest.mark.asyncio
-async def test_danbooru_term_model_receives_resolved_request(monkeypatch):
-    """Danbooru expansion should use the resolved request, not only the latest turn."""
-
-    captured = {}
-
-    class CaptureModel:
-        async def ainvoke(self, messages):
-            captured["request"] = str(messages[1].content)
-            return AIMessage(content='["updated_cave"]')
-
-    monkeypatch.setattr(
-        "app.agents.prompt_generation.danbooru.ai_provider.get_model",
-        lambda **kwargs: CaptureModel(),
-    )
-
-    terms = await generate_search_terms(
-        {"model": "test-model", "system_prompt": "", "user_input": "change the scene"},
-        {
-            "resolved_request": "same character in updated cave",
-            "latest_user_input": "change the scene",
-            "character": "same character",
-            "scene": "updated cave",
-        },
-        "scene",
-    )
-
-    assert "resolved_request: same character in updated cave" in captured["request"]
-    assert "scene: updated cave" in captured["request"]
-    assert "updated_cave" in terms
-
-
-@pytest.mark.asyncio
-async def test_danbooru_terms_filter_prompt_quality_noise(monkeypatch):
-    """Default prompt quality words should not become Danbooru lookup terms."""
-
-    class NoisyModel:
-        async def ainvoke(self, messages):
-            return AIMessage(
-                content='["best quality", "very aesthetic", "tentacle cave"]'
-            )
-
-    monkeypatch.setattr(
-        "app.agents.prompt_generation.danbooru.ai_provider.get_model",
-        lambda **kwargs: NoisyModel(),
-    )
-
-    terms = await generate_search_terms(
-        {"model": "test-model", "system_prompt": "", "user_input": ""},
-        {
-            "resolved_request": "masterpiece, best quality, very aesthetic, tentacle cave",
-            "scene": "tentacle cave",
-        },
-        "scene",
-    )
-
-    normalized = {term.replace(" ", "_").lower() for term in terms}
-    assert "best_quality" not in normalized
-    assert "very_aesthetic" not in normalized
-    assert "quality" not in normalized
-    assert "tentacle_cave" in normalized
-
-
-def test_only_verified_records_become_final_tags():
-    """模型候选只用于查询，未验证词不得冒充最终 Danbooru 标签。"""
-
-    tags = verified_tags_from_records(
-        [{"name": "cave", "category": 0, "post_count": 12000}],
-    )
-
-    assert tags == ["cave"]
-
-
-def test_unqualified_danbooru_character_tag_is_valid():
-    assert validated_identity_tag(
-        {
-            "canonical_name": "Hatsune Miku",
-            "danbooru_tag": "hatsune_miku",
-        }
-    ) == "hatsune_miku"
-
-
-@pytest.mark.asyncio
-async def test_unresolved_named_character_expands_beyond_generic_candidate(
-    monkeypatch,
-):
-    class IdentityModel:
-        async def ainvoke(self, messages):
-            return AIMessage(content='["moria_luluka", "cure_arcana_shadow"]')
-
-    monkeypatch.setattr(
-        "app.agents.prompt_generation.danbooru.ai_provider.get_model",
-        lambda **kwargs: IdentityModel(),
-    )
-
-    terms = await generate_search_terms(
-        {"model": "test-model", "system_prompt": "", "user_input": ""},
-        {
-            "character": "森亚露露卡",
-            "raw_request": "将角色改成森亚露露卡",
-            "character_identities": [
-                {
-                    "original_name": "森亚露露卡",
-                    "canonical_name": "",
-                    "series": "",
-                    "danbooru_tag": "",
-                }
-            ],
-            "character_tag_candidates": ["1girl"],
-        },
-        "character",
-    )
-
-    assert "1girl" in terms
-    assert "moria_luluka" in terms
-    assert "cure_arcana_shadow" in terms
-
-
-def test_unresolved_identity_does_not_delete_verified_character_record():
-    records = filter_character_records(
-        [
-            {"name": "moria_luluka", "category": 4, "post_count": 2500},
-            {"name": "1girl", "category": 0, "post_count": 8000000},
-        ],
-        {
-            "character_identities": [
-                {
-                    "original_name": "森亚露露卡",
-                    "canonical_name": "",
-                    "series": "",
-                    "danbooru_tag": "",
-                }
-            ]
-        },
-    )
-
-    assert [record["name"] for record in records] == ["moria_luluka", "1girl"]
-
-
-def test_named_character_identity_rejects_unrelated_existing_character_tag():
-    """An existing Danbooru character tag is not proof that it is the requested person."""
-
-    records = filter_character_records(
-        [
-            {"name": "irena", "category": 4, "post_count": 20},
-            {
-                "name": "elaina_(majo_no_tabitabi)",
-                "category": 4,
-                "post_count": 1000,
-            },
-            {"name": "white_hair", "category": 0, "post_count": 500000},
-        ],
-        {
-            "character_identities": [
-                {
-                    "original_name": "伊蕾娜",
-                    "canonical_name": "Elaina",
-                    "series": "Majo no Tabitabi",
-                    "danbooru_tag": "elaina_(majo_no_tabitabi)",
-                }
-            ]
-        },
-    )
-
-    assert [record["name"] for record in records] == [
-        "elaina_(majo_no_tabitabi)",
-        "white_hair",
-    ]
-
-
-def test_nai_v4_keeps_relations_while_nai_v3_emits_verified_tags_only():
-    base_state = {
-        "requirements_json": {},
-        "prompt_sections": {
-            "character": ["elaina_(majo_no_tabitabi)"],
-            "scene": ["cave"],
-            "additional": [],
-            "descriptive_phrases": ["tentacles continuously extend from the cave walls"],
-        },
-        "negative_prompt": "",
-        "danbooru_tag_records": [],
-    }
-
-    v4 = optimize_format_node({**base_state, "target_model": "nai_v4"})
-    v3 = optimize_format_node({**base_state, "target_model": "nai_v3"})
-
-    assert "elaina_(majo_no_tabitabi)" in v4["formatted_prompt"]
-    assert "tentacles continuously extend from the cave walls" in v4["formatted_prompt"]
-    assert "elaina_(majo_no_tabitabi)" in v3["formatted_prompt"]
-    assert "tentacles continuously extend from the cave walls" not in v3["formatted_prompt"]
-
-
-def test_aggregator_separates_relations_negatives_and_unverified_candidates():
-    """关系描述需要保留，否定句和未验证候选不能污染正向标签。"""
-
-    result = aggregate_prompt_node(
-        {
-            "character_tags": ["elaina_(majo_no_tabitabi)"],
-            "scene_tags": ["cave"],
-            "additional_tags": [],
-            "danbooru_search_terms": [
-                "elaina_(majo_no_tabitabi)",
-                "cave",
-                "appearing_from_nowhere",
-            ],
-            "danbooru_tag_records": [
-                {"name": "elaina_(majo_no_tabitabi)", "post_count": 1000},
-                {"name": "cave", "post_count": 2000},
-            ],
-            "requirements_json": {
-                "positive_phrases": [
-                    "Elaina clearly visible",
-                    "tentacles continuously extending from the cave walls",
-                    "avoid floating disconnected tentacles",
-                ],
-                "negative_phrases": ["floating disconnected tentacles"],
-                "required_elements": ["Elaina"],
-                "forbidden_elements": ["disconnected tentacles"],
-                "spatial_relations": ["tentacles originate from cave walls"],
-            },
-        }
-    )
-
-    assert "Elaina clearly visible" in result["draft_prompt"]
-    assert "tentacles continuously extending from the cave walls" in result[
-        "draft_prompt"
-    ]
-    assert "appearing_from_nowhere" not in result["draft_prompt"]
-    assert "avoid floating disconnected tentacles" not in result["draft_prompt"]
-    assert "floating disconnected tentacles" in result["negative_prompt"]
-    assert "avoid floating disconnected tentacles" not in result["negative_prompt"]
-    report = result["consistency_report"]
-    assert "appearing_from_nowhere" in report["unverified_candidates_excluded"]
+    assert memory["scene_document"]["version"] == 3
+    assert memory["resolved_prompt_ir"]["document_version"] == 3

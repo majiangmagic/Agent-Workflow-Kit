@@ -43,17 +43,21 @@ def test_workflow_options_endpoint_lists_registered_workflows():
         for workflow in workflows
         if workflow["name"] == "prompt_generation_workflow"
     )
-    assert prompt_workflow["entrypoint"] == "supervisor"
+    assert prompt_workflow["entrypoint"] == "scene_document_editor"
     assert {node["name"] for node in prompt_workflow["nodes"]} == {
-        "supervisor",
-        "natural_language_editor",
-        "requirement_analyzer",
-        "character_prompt_generator",
-        "scene_prompt_generator",
-        "additional_prompt_generator",
-        "prompt_aggregator",
-        "format_optimizer",
+        "scene_document_editor",
+        "scene_document_processor",
+        "character_identity_resolver",
+        "visual_semantic_resolver",
+        "prompt_compiler",
+        "consistency_validator",
+        "semantic_repairer",
+        "target_renderer",
     }
+    conditional_edges = [
+        edge for edge in prompt_workflow["edges"] if edge.get("conditional")
+    ]
+    assert {edge["branch"] for edge in conditional_edges} == {"then", "otherwise"}
     controls = {
         control["key"]: control for control in prompt_workflow["ui"]["controls"]
     }

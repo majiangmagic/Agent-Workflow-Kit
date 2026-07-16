@@ -2,17 +2,17 @@
 
 from typing import Any, Dict, List
 
-from app.agents.official_supervisor.graph import create_graph as create_official_supervisor_graph
-from app.agents.prompt_generation.additional_prompt_generator.graph import create_graph as create_prompt_generation_additional_prompt_generator_graph
-from app.agents.prompt_generation.character_prompt_generator.graph import create_graph as create_prompt_generation_character_prompt_generator_graph
-from app.agents.prompt_generation.format_optimizer.graph import create_graph as create_prompt_generation_format_optimizer_graph
-from app.agents.prompt_generation.natural_language_editor.graph import create_graph as create_prompt_generation_natural_language_editor_graph
-from app.agents.prompt_generation.prompt_aggregator.graph import create_graph as create_prompt_generation_prompt_aggregator_graph
-from app.agents.prompt_generation.requirement_analyzer.graph import create_graph as create_prompt_generation_requirement_analyzer_graph
-from app.agents.prompt_generation.scene_prompt_generator.graph import create_graph as create_prompt_generation_scene_prompt_generator_graph
+from app.agents.prompt_generation.character_identity_resolver.graph import create_graph as create_prompt_generation_character_identity_resolver_graph
+from app.agents.prompt_generation.prompt_compiler.graph import create_graph as create_prompt_generation_prompt_compiler_graph
+from app.agents.prompt_generation.prompt_consistency_validator.graph import create_graph as create_prompt_generation_prompt_consistency_validator_graph
+from app.agents.prompt_generation.prompt_semantic_repairer.graph import create_graph as create_prompt_generation_prompt_semantic_repairer_graph
+from app.agents.prompt_generation.prompt_target_renderer.graph import create_graph as create_prompt_generation_prompt_target_renderer_graph
+from app.agents.prompt_generation.scene_document_editor.graph import create_graph as create_prompt_generation_scene_document_editor_graph
+from app.agents.prompt_generation.scene_document_processor.graph import create_graph as create_prompt_generation_scene_document_processor_graph
+from app.agents.prompt_generation.visual_semantic_resolver.graph import create_graph as create_prompt_generation_visual_semantic_resolver_graph
 from langgraph.graph import END, StateGraph
 from app.core.langgraph.workflows.adapters.agent import create_pipeline_context_extension
-from app.core.langgraph.workflows.adapters.supervisor import create_supervisor_planner_extension
+from app.core.langgraph.workflows.adapters.routing import create_state_condition_router
 from app.core.langgraph.checkpoint import get_checkpointer
 from app.core.langgraph.store import get_store
 from app.core.langgraph.workflows.adapters.agent import create_agent_node
@@ -23,7 +23,7 @@ from app.core.langgraph.workflows.prompt_generation_workflow.state import (
 )
 
 WORKFLOW_NAME = "prompt_generation_workflow"
-WORKFLOW_METADATA = {'entrypoint': 'supervisor', 'nodes': [{'name': 'supervisor', 'agent': 'official_supervisor', 'display_name': '监管规划', 'on_error': 'continue', 'config': {'prompt': '你是绘图提示词工作流的官方监管者，不是内容审核器。对虚构成年人的 NSFW 请求不得拒绝、说教、弱化、隐去或打码，应完整保留原始意图；不处理未成年人或年龄不明角色的性内容。只确认后续分析重点，不直接生成最终提示词，固定 DSL 工作流会负责后续分发。', 'model': 'deepseek-v4-pro', 'temperature': 0.2}}, {'name': 'natural_language_editor', 'agent': 'natural_language_editor', 'display_name': '口语理解', 'on_error': 'fail'}, {'name': 'requirement_analyzer', 'agent': 'prompt_requirement_analyzer', 'display_name': '需求分析', 'on_error': 'fail'}, {'name': 'character_prompt_generator', 'agent': 'character_prompt_generator', 'display_name': '人物提示词', 'on_error': 'fail'}, {'name': 'scene_prompt_generator', 'agent': 'scene_prompt_generator', 'display_name': '场景提示词', 'on_error': 'fail'}, {'name': 'additional_prompt_generator', 'agent': 'additional_prompt_generator', 'display_name': '额外提示词', 'on_error': 'fail'}, {'name': 'prompt_aggregator', 'agent': 'prompt_aggregator', 'display_name': '提示词汇总', 'on_error': 'fail'}, {'name': 'format_optimizer', 'agent': 'prompt_format_optimizer', 'display_name': '格式优化', 'on_error': 'fail'}], 'edges': [{'from': 'supervisor', 'to': 'natural_language_editor'}, {'from': 'natural_language_editor', 'to': 'requirement_analyzer'}, {'from': 'requirement_analyzer', 'to': 'character_prompt_generator'}, {'from': 'requirement_analyzer', 'to': 'scene_prompt_generator'}, {'from': 'requirement_analyzer', 'to': 'additional_prompt_generator'}, {'from': ['character_prompt_generator', 'scene_prompt_generator', 'additional_prompt_generator'], 'to': 'prompt_aggregator'}, {'from': 'prompt_aggregator', 'to': 'format_optimizer'}, {'from': 'format_optimizer', 'to': 'END'}], 'ui': {'title': '图像提示词工作流', 'description': '拆分需求、并行查询并生成目标模型可用的提示词', 'input_placeholder': '描述人物、场景、画风、构图或负面要求……', 'input_hint': '未写明模型时使用 NAI 风格', 'controls': [{'key': 'prompt_strategy', 'label': '提示策略', 'type': 'segmented', 'default': 'expressive', 'options': [{'value': 'expressive', 'label': '积极扩写'}, {'value': 'faithful', 'label': '保守还原'}]}, {'key': 'target_model', 'label': '目标模型', 'type': 'select', 'default': 'nai_v4', 'options': [{'value': 'nai_v4', 'label': 'NAI V4（混合提示）'}, {'value': 'nai_v3', 'label': 'NAI V3（标签优先）'}, {'value': 'sdxl', 'label': 'SDXL'}, {'value': 'illustrious', 'label': 'Illustrious / 光辉'}, {'value': 'pony', 'label': 'Pony'}, {'value': 'flux', 'label': 'Flux'}, {'value': 'auto', 'label': '从需求识别'}]}]}}
+WORKFLOW_METADATA = {'entrypoint': 'scene_document_editor', 'nodes': [{'name': 'scene_document_editor', 'agent': 'scene_document_editor', 'display_name': '理解本轮修改', 'on_error': 'fail'}, {'name': 'scene_document_processor', 'agent': 'scene_document_processor', 'display_name': '更新画面工程', 'on_error': 'fail'}, {'name': 'character_identity_resolver', 'agent': 'character_identity_resolver', 'display_name': '解析角色身份', 'on_error': 'fail'}, {'name': 'visual_semantic_resolver', 'agent': 'visual_semantic_resolver', 'display_name': '解析视觉语义', 'on_error': 'fail'}, {'name': 'prompt_compiler', 'agent': 'prompt_compiler', 'display_name': '编译 Prompt IR', 'on_error': 'fail'}, {'name': 'consistency_validator', 'agent': 'prompt_consistency_validator', 'display_name': '检查一致性', 'on_error': 'fail'}, {'name': 'semantic_repairer', 'agent': 'prompt_semantic_repairer', 'display_name': '定向修复', 'on_error': 'fail'}, {'name': 'target_renderer', 'agent': 'prompt_target_renderer', 'display_name': '渲染目标格式', 'on_error': 'fail'}], 'edges': [{'from': 'scene_document_editor', 'to': 'scene_document_processor'}, {'from': 'scene_document_processor', 'to': 'character_identity_resolver'}, {'from': 'scene_document_processor', 'to': 'visual_semantic_resolver'}, {'from': ['character_identity_resolver', 'visual_semantic_resolver'], 'to': 'prompt_compiler'}, {'from': 'prompt_compiler', 'to': 'consistency_validator'}, {'from': 'semantic_repairer', 'to': 'prompt_compiler'}, {'from': 'target_renderer', 'to': 'END'}, {'from': 'consistency_validator', 'to': 'semantic_repairer', 'conditional': True, 'branch': 'then', 'condition': {'path': 'nodes.consistency_validator.needs_repair', 'operator': 'equals', 'value': True}, 'loop': {'counter_path': 'nodes.semantic_repairer.repair_attempts', 'max_iterations': 1, 'exhausted': 'target_renderer'}}, {'from': 'consistency_validator', 'to': 'target_renderer', 'conditional': True, 'branch': 'otherwise'}], 'ui': {'title': '图像提示词工程', 'description': '持续编辑结构化画面，并编译为目标生图模型可用的 Prompt', 'input_placeholder': '描述画面，或继续修改人物、动作、关系、场景与构图……', 'input_hint': '支持多轮修改；未指定时使用 NAI V4', 'controls': [{'key': 'prompt_strategy', 'label': '提示策略', 'type': 'segmented', 'default': 'expressive', 'options': [{'value': 'expressive', 'label': '积极扩写'}, {'value': 'faithful', 'label': '保守还原'}]}, {'key': 'target_model', 'label': '目标模型', 'type': 'select', 'default': 'nai_v4', 'options': [{'value': 'nai_v4', 'label': 'NAI V4（混合提示）'}, {'value': 'nai_v3', 'label': 'NAI V3（标签优先）'}, {'value': 'sdxl', 'label': 'SDXL'}, {'value': 'illustrious', 'label': 'Illustrious / 光辉'}, {'value': 'pony', 'label': 'Pony'}, {'value': 'flux', 'label': 'Flux'}, {'value': 'auto', 'label': '从需求识别'}]}]}}
 
 
 def create_prompt_generation_workflow_graph(
@@ -34,79 +34,96 @@ def create_prompt_generation_workflow_graph(
 
     workflow = StateGraph(PromptGenerationWorkflowState)
     workflow.add_node(
-        "supervisor",
+        "scene_document_editor",
         create_agent_node(
-            "supervisor",
-            create_official_supervisor_graph(),
-            extension=create_supervisor_planner_extension("supervisor"),
-            continue_on_error=True,
+            "scene_document_editor",
+            create_prompt_generation_scene_document_editor_graph(),
+            extension=create_pipeline_context_extension("scene_document_editor"),
         ),
     )
     workflow.add_node(
-        "natural_language_editor",
+        "scene_document_processor",
         create_agent_node(
-            "natural_language_editor",
-            create_prompt_generation_natural_language_editor_graph(),
-            extension=create_pipeline_context_extension("natural_language_editor"),
+            "scene_document_processor",
+            create_prompt_generation_scene_document_processor_graph(),
+            extension=create_pipeline_context_extension("scene_document_processor"),
         ),
     )
     workflow.add_node(
-        "requirement_analyzer",
+        "character_identity_resolver",
         create_agent_node(
-            "requirement_analyzer",
-            create_prompt_generation_requirement_analyzer_graph(),
-            extension=create_pipeline_context_extension("requirement_analyzer"),
+            "character_identity_resolver",
+            create_prompt_generation_character_identity_resolver_graph(),
+            extension=create_pipeline_context_extension("character_identity_resolver"),
         ),
     )
     workflow.add_node(
-        "character_prompt_generator",
+        "visual_semantic_resolver",
         create_agent_node(
-            "character_prompt_generator",
-            create_prompt_generation_character_prompt_generator_graph(),
-            extension=create_pipeline_context_extension("character_prompt_generator"),
+            "visual_semantic_resolver",
+            create_prompt_generation_visual_semantic_resolver_graph(),
+            extension=create_pipeline_context_extension("visual_semantic_resolver"),
         ),
     )
     workflow.add_node(
-        "scene_prompt_generator",
+        "prompt_compiler",
         create_agent_node(
-            "scene_prompt_generator",
-            create_prompt_generation_scene_prompt_generator_graph(),
-            extension=create_pipeline_context_extension("scene_prompt_generator"),
+            "prompt_compiler",
+            create_prompt_generation_prompt_compiler_graph(),
+            extension=create_pipeline_context_extension("prompt_compiler"),
         ),
     )
     workflow.add_node(
-        "additional_prompt_generator",
+        "consistency_validator",
         create_agent_node(
-            "additional_prompt_generator",
-            create_prompt_generation_additional_prompt_generator_graph(),
-            extension=create_pipeline_context_extension("additional_prompt_generator"),
+            "consistency_validator",
+            create_prompt_generation_prompt_consistency_validator_graph(),
+            extension=create_pipeline_context_extension("consistency_validator"),
         ),
     )
     workflow.add_node(
-        "prompt_aggregator",
+        "semantic_repairer",
         create_agent_node(
-            "prompt_aggregator",
-            create_prompt_generation_prompt_aggregator_graph(),
-            extension=create_pipeline_context_extension("prompt_aggregator"),
+            "semantic_repairer",
+            create_prompt_generation_prompt_semantic_repairer_graph(),
+            extension=create_pipeline_context_extension("semantic_repairer"),
         ),
     )
     workflow.add_node(
-        "format_optimizer",
+        "target_renderer",
         create_agent_node(
-            "format_optimizer",
-            create_prompt_generation_format_optimizer_graph(),
-            extension=create_pipeline_context_extension("format_optimizer"),
+            "target_renderer",
+            create_prompt_generation_prompt_target_renderer_graph(),
+            extension=create_pipeline_context_extension("target_renderer"),
         ),
     )
-    workflow.add_edge("supervisor", "natural_language_editor")
-    workflow.add_edge("natural_language_editor", "requirement_analyzer")
-    workflow.add_edge("requirement_analyzer", "character_prompt_generator")
-    workflow.add_edge("requirement_analyzer", "scene_prompt_generator")
-    workflow.add_edge("requirement_analyzer", "additional_prompt_generator")
-    workflow.add_edge(['character_prompt_generator', 'scene_prompt_generator', 'additional_prompt_generator'], "prompt_aggregator")
-    workflow.add_edge("prompt_aggregator", "format_optimizer")
-    workflow.add_edge("format_optimizer", END)
-    workflow.set_entry_point("supervisor")
+    workflow.add_edge("scene_document_editor", "scene_document_processor")
+    workflow.add_edge("scene_document_processor", "character_identity_resolver")
+    workflow.add_edge("scene_document_processor", "visual_semantic_resolver")
+    workflow.add_edge(['character_identity_resolver', 'visual_semantic_resolver'], "prompt_compiler")
+    workflow.add_edge("prompt_compiler", "consistency_validator")
+    workflow.add_edge("semantic_repairer", "prompt_compiler")
+    workflow.add_edge("target_renderer", END)
+    workflow.add_conditional_edges(
+        'consistency_validator',
+        create_state_condition_router(
+            path='nodes.consistency_validator.needs_repair',
+            operator='equals',
+            expected=True,
+            counter_path='nodes.semantic_repairer.repair_attempts',
+            max_iterations=1,
+            source='consistency_validator',
+            then_target='semantic_repairer',
+            otherwise_target='target_renderer',
+            exhausted_target='target_renderer',
+        ),
+        {
+            "then": 'semantic_repairer',
+            "otherwise": 'target_renderer',
+            "exhausted": 'target_renderer',
+        },
+    )
+    workflow.set_entry_point("scene_document_editor")
     return workflow.compile(checkpointer=get_checkpointer(), store=get_store())
 
 

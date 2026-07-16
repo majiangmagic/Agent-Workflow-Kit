@@ -95,19 +95,27 @@ supervisor_simple workflow
 
 ### `prompt_generation_workflow`
 
-完整的多 Agent 实战链路：
+面向多轮修改的结构化图像 Prompt 编译链路：
 
 ```text
-监管规划
-  -> 口语理解
-  -> 需求分析
-  -> 人物生成 ┐
-     场景生成 ├-> Prompt 汇总 -> 模型格式优化
-     附加生成 ┘
+用户消息 + 上一版 SceneDocument
+  -> 请求状态编辑器 -> Patch 校验与执行
+  -> 角色身份解析 ┐
+     视觉语义解析 ┴-> Prompt Compiler -> 一致性检查
+                                      ├-> 目标模型 Renderer
+                                      `-> 定向修复（最多一次）-> Compiler
 ```
 
-口语理解节点维护跨轮请求契约，需求分析将完整要求拆给并行生成器，生成器查询并验证
-Danbooru 标签，汇总节点合并原子标签与描述性短语，最后按目标模型输出格式。页面提供：
+`SceneDocument` 是与具体模型无关的画面工程，保存稳定角色 ID、身份、动作、环境、
+复杂关系与正负约束。用户每一轮自然语言先转换成受限 `PatchProposal`，由代码事务执行；
+最终 Prompt 是从当前文档编译得到的产物，不会反向成为下一轮事实来源。
+
+角色身份解析和视觉语义解析按影响范围复用上一版 `ResolvedPromptIR`。Danbooru 是两者共享
+的标签查询基础设施，不是与角色平级的 Agent。Prompt Compiler 负责旧身份清除、来源追踪、
+正负极性和修复覆盖；规则检查发现缺失、残留或冲突时，只允许一次定向语义修复。
+
+需要理解自然语言的节点统一使用成年虚构 NSFW 转换协议，准确保留允许范围内的身体交互、
+动作和空间关系；Patch、标签验证、编译、检查和 Renderer 均为确定性代码。页面提供：
 
 - `积极扩写`：允许补充有助于画面的次要细节
 - `保守还原`：优先保持用户明确要求，减少额外扩写
@@ -222,6 +230,32 @@ Workflow，`state.py` 会根据节点和本地 Agent manifest 机械构造初始
 
 Workflow 节点可通过 `config` 覆盖本地 Agent manifest 的 prompt/model 等默认值，
 这种覆盖仍属于本地 Workflow 定义，不进入数据库。
+
+### 条件边与有界循环
+
+Workflow DSL 支持根据 state 路径生成原生 LangGraph 条件边：
+
+```json
+{
+  "from": "consistency_validator",
+  "to": "semantic_repairer",
+  "otherwise": "target_renderer",
+  "condition": {
+    "path": "nodes.consistency_validator.needs_repair",
+    "operator": "equals",
+    "value": true
+  },
+  "loop": {
+    "counter_path": "nodes.semantic_repairer.repair_attempts",
+    "max_iterations": 1,
+    "exhausted": "target_renderer"
+  }
+}
+```
+
+支持 `equals`、`not_equals`、`truthy`、`falsy`、`in` 和 `not_in`。循环次数保存在
+Workflow state/checkpoint 中，不使用进程级闭包计数，因此并发会话互不影响。达到上限时
+进入 `exhausted` 节点。Web 执行链和 DSL 设计器能够显示环形拓扑并保留条件声明。
 
 ### 动态页面参数
 

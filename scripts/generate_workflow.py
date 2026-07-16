@@ -34,12 +34,36 @@ class WorkflowEdgeDsl:
 
 
 @dataclass(frozen=True)
+class WorkflowConditionDsl:
+    path: str
+    operator: str
+    value: Any
+
+
+@dataclass(frozen=True)
+class WorkflowLoopGuardDsl:
+    counter_path: str
+    max_iterations: int
+    exhausted: str
+
+
+@dataclass(frozen=True)
+class WorkflowConditionalEdgeDsl:
+    source: str
+    target: str
+    otherwise: str
+    condition: WorkflowConditionDsl
+    loop: Optional[WorkflowLoopGuardDsl]
+
+
+@dataclass(frozen=True)
 class WorkflowDsl:
     name: str
     state_alias: str
     entrypoint: str
     nodes: List[WorkflowNodeDsl]
     edges: List[WorkflowEdgeDsl]
+    conditional_edges: List[WorkflowConditionalEdgeDsl]
     ui: Dict[str, Any]
 
 
@@ -169,12 +193,80 @@ def parse_nodes(raw_nodes: Any) -> List[WorkflowNodeDsl]:
     return nodes
 
 
-def parse_edges(raw_edges: Any) -> List[WorkflowEdgeDsl]:
-    """Parse workflow edge definitions."""
+def parse_target(raw_target: Any) -> str:
+    """Normalize one workflow edge target."""
+
+    target_text = str(raw_target)
+    return "END" if target_text == "END" else snake_case(target_text)
+
+
+def parse_edges(
+    raw_edges: Any,
+) -> tuple[List[WorkflowEdgeDsl], List[WorkflowConditionalEdgeDsl]]:
+    """Parse ordinary and state-driven conditional workflow edges."""
 
     edges = []
+    conditional_edges = []
     for raw_edge in raw_edges or []:
         raw_source = raw_edge["from"]
+        raw_condition = raw_edge.get("condition")
+        if raw_condition is not None:
+            if isinstance(raw_source, list):
+                raise ValueError("conditional edge 'from' must be one node")
+            if not isinstance(raw_condition, dict):
+                raise ValueError("conditional edge condition must be a map")
+            path = str(raw_condition.get("path") or "").strip()
+            if not path:
+                raise ValueError("conditional edge condition.path is required")
+            operator = str(raw_condition.get("operator") or "equals").strip().lower()
+            if operator not in {
+                "equals",
+                "not_equals",
+                "truthy",
+                "falsy",
+                "in",
+                "not_in",
+            }:
+                raise ValueError(
+                    f"unsupported conditional edge operator '{operator}'"
+                )
+            if "to" not in raw_edge or "otherwise" not in raw_edge:
+                raise ValueError(
+                    "conditional edge requires both 'to' and 'otherwise'"
+                )
+            loop = None
+            raw_loop = raw_edge.get("loop")
+            if raw_loop is not None:
+                if not isinstance(raw_loop, dict):
+                    raise ValueError("conditional edge loop must be a map")
+                counter_path = str(raw_loop.get("counter_path") or "").strip()
+                max_iterations = int(raw_loop.get("max_iterations") or 0)
+                if not counter_path or max_iterations < 1:
+                    raise ValueError(
+                        "conditional edge loop requires counter_path and "
+                        "max_iterations >= 1"
+                    )
+                loop = WorkflowLoopGuardDsl(
+                    counter_path=counter_path,
+                    max_iterations=max_iterations,
+                    exhausted=parse_target(
+                        raw_loop.get("exhausted") or raw_edge["otherwise"]
+                    ),
+                )
+            conditional_edges.append(
+                WorkflowConditionalEdgeDsl(
+                    source=snake_case(str(raw_source)),
+                    target=parse_target(raw_edge["to"]),
+                    otherwise=parse_target(raw_edge["otherwise"]),
+                    condition=WorkflowConditionDsl(
+                        path=path,
+                        operator=operator,
+                        value=raw_condition.get("value"),
+                    ),
+                    loop=loop,
+                )
+            )
+            continue
         source = (
             tuple(snake_case(str(item)) for item in raw_source)
             if isinstance(raw_source, list)
@@ -184,10 +276,10 @@ def parse_edges(raw_edges: Any) -> List[WorkflowEdgeDsl]:
         if not isinstance(raw_targets, list):
             raw_targets = [raw_targets]
         for raw_target in raw_targets:
-            target_text = str(raw_target)
-            target = "END" if target_text == "END" else snake_case(target_text)
-            edges.append(WorkflowEdgeDsl(source=source, target=target))
-    return edges
+            edges.append(
+                WorkflowEdgeDsl(source=source, target=parse_target(raw_target))
+            )
+    return edges, conditional_edges
 
 
 def normalize_ui(raw_ui: Any) -> Dict[str, Any]:
@@ -268,7 +360,7 @@ def parse_workflow_dsl(data: Dict[str, Any]) -> WorkflowDsl:
     if entrypoint not in node_names:
         raise ValueError(f"entrypoint '{entrypoint}' is not defined in nodes")
 
-    edges = parse_edges(data.get("edges"))
+    edges, conditional_edges = parse_edges(data.get("edges"))
     for edge in edges:
         sources = edge.source if isinstance(edge.source, tuple) else (edge.source,)
         for source in sources:
@@ -276,6 +368,20 @@ def parse_workflow_dsl(data: Dict[str, Any]) -> WorkflowDsl:
                 raise ValueError(f"edge source '{source}' is not defined in nodes")
         if edge.target != "END" and edge.target not in node_names:
             raise ValueError(f"edge target '{edge.target}' is not defined in nodes")
+    for edge in conditional_edges:
+        if edge.source not in node_names:
+            raise ValueError(
+                f"conditional edge source '{edge.source}' is not defined in nodes"
+            )
+        for target in (
+            edge.target,
+            edge.otherwise,
+            edge.loop.exhausted if edge.loop else None,
+        ):
+            if target and target != "END" and target not in node_names:
+                raise ValueError(
+                    f"conditional edge target '{target}' is not defined in nodes"
+                )
 
     ui = normalize_ui(data.get("ui"))
 
@@ -285,6 +391,7 @@ def parse_workflow_dsl(data: Dict[str, Any]) -> WorkflowDsl:
         entrypoint=entrypoint,
         nodes=nodes,
         edges=edges,
+        conditional_edges=conditional_edges,
         ui=ui,
     )
 
@@ -320,12 +427,26 @@ def render_graph(workflow: WorkflowDsl) -> str:
     agent_imports = render_agent_imports(workflow)
     extension_import_text, extension_by_node = extension_imports(workflow)
     node_calls = "\n".join(render_node_call(node, extension_by_node) for node in workflow.nodes)
-    edge_calls = "\n".join(render_edge_call(edge) for edge in workflow.edges)
+    edge_calls = "\n".join(
+        [
+            *(render_edge_call(edge) for edge in workflow.edges),
+            *(
+                render_conditional_edge_call(edge)
+                for edge in workflow.conditional_edges
+            ),
+        ]
+    )
     imports = "\n".join(
         part
         for part in [
             "from langgraph.graph import END, StateGraph",
             extension_import_text,
+            (
+                "from app.core.langgraph.workflows.adapters.routing "
+                "import create_state_condition_router"
+                if workflow.conditional_edges
+                else ""
+            ),
             "from app.core.langgraph.checkpoint import get_checkpointer",
             "from app.core.langgraph.store import get_store",
             "from app.core.langgraph.workflows.adapters.agent import create_agent_node",
@@ -394,6 +515,39 @@ def render_workflow_metadata(workflow: WorkflowDsl) -> str:
                 "to": edge.target,
             }
             for edge in workflow.edges
+        ] + [
+            branch
+            for edge in workflow.conditional_edges
+            for branch in (
+                {
+                    "from": edge.source,
+                    "to": edge.target,
+                    "conditional": True,
+                    "branch": "then",
+                    "condition": {
+                        "path": edge.condition.path,
+                        "operator": edge.condition.operator,
+                        "value": edge.condition.value,
+                    },
+                    **(
+                        {
+                            "loop": {
+                                "counter_path": edge.loop.counter_path,
+                                "max_iterations": edge.loop.max_iterations,
+                                "exhausted": edge.loop.exhausted,
+                            }
+                        }
+                        if edge.loop
+                        else {}
+                    ),
+                },
+                {
+                    "from": edge.source,
+                    "to": edge.otherwise,
+                    "conditional": True,
+                    "branch": "otherwise",
+                },
+            )
         ],
         "ui": workflow.ui,
     }
@@ -410,6 +564,42 @@ def render_edge_call(edge: WorkflowEdgeDsl) -> str:
     )
     target = "END" if edge.target == "END" else f'"{edge.target}"'
     return f"    workflow.add_edge({source}, {target})"
+
+
+def render_target(target: str) -> str:
+    """Render a node target or LangGraph END constant."""
+
+    return "END" if target == "END" else repr(target)
+
+
+def render_conditional_edge_call(edge: WorkflowConditionalEdgeDsl) -> str:
+    """Render a state-path conditional edge with an optional loop guard."""
+
+    loop_args = ""
+    exhausted = edge.otherwise
+    if edge.loop:
+        exhausted = edge.loop.exhausted
+        loop_args = (
+            f",\n            counter_path={edge.loop.counter_path!r},"
+            f"\n            max_iterations={edge.loop.max_iterations}"
+        )
+    return f'''    workflow.add_conditional_edges(
+        {edge.source!r},
+        create_state_condition_router(
+            path={edge.condition.path!r},
+            operator={edge.condition.operator!r},
+            expected={edge.condition.value!r}{loop_args},
+            source={edge.source!r},
+            then_target={edge.target!r},
+            otherwise_target={edge.otherwise!r},
+            exhausted_target={exhausted!r},
+        ),
+        {{
+            "then": {render_target(edge.target)},
+            "otherwise": {render_target(edge.otherwise)},
+            "exhausted": {render_target(exhausted)},
+        }},
+    )'''
 
 
 def extension_imports(workflow: WorkflowDsl) -> tuple[str, Dict[str, str]]:

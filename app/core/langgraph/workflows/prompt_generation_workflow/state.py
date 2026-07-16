@@ -14,14 +14,14 @@ PromptGenerationWorkflowState = WorkflowState
 
 WORKFLOW_NAME = "prompt_generation_workflow"
 NODE_AGENTS = {
-    "supervisor": "official_supervisor",
-    "natural_language_editor": "natural_language_editor",
-    "requirement_analyzer": "prompt_requirement_analyzer",
-    "character_prompt_generator": "character_prompt_generator",
-    "scene_prompt_generator": "scene_prompt_generator",
-    "additional_prompt_generator": "additional_prompt_generator",
-    "prompt_aggregator": "prompt_aggregator",
-    "format_optimizer": "prompt_format_optimizer",
+    "scene_document_editor": "scene_document_editor",
+    "scene_document_processor": "scene_document_processor",
+    "character_identity_resolver": "character_identity_resolver",
+    "visual_semantic_resolver": "visual_semantic_resolver",
+    "prompt_compiler": "prompt_compiler",
+    "consistency_validator": "prompt_consistency_validator",
+    "semantic_repairer": "prompt_semantic_repairer",
+    "target_renderer": "prompt_target_renderer",
 }
 
 
