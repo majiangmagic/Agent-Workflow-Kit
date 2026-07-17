@@ -134,6 +134,10 @@ class ScenePatch(DomainModel):
     clarification: Optional[str] = None
     clarification_options: List[str] = Field(default_factory=list, max_length=4)
     detected_entities: List[DetectedEntity] = Field(default_factory=list)
+    rejected_enrichment_ids: List[str] = Field(default_factory=list, max_length=32)
+    add_positive_constraints: List[str] = Field(default_factory=list, max_length=16)
+    add_negative_constraints: List[str] = Field(default_factory=list, max_length=16)
+    removed_constraint_ids: List[str] = Field(default_factory=list, max_length=32)
 
     @model_validator(mode="after")
     def values_match_operations(self) -> "ScenePatch":
@@ -151,6 +155,14 @@ class ScenePatch(DomainModel):
             raise ValueError(
                 "named characters require participant bindings: " + ", ".join(unbound)
             )
+        for constraint in [
+            *self.add_positive_constraints,
+            *self.add_negative_constraints,
+        ]:
+            if any("\u3400" <= char <= "\u9fff" for char in constraint):
+                raise ValueError(
+                    "constraint overlay values must use concise English prompt language"
+                )
         return self
 
 
@@ -211,6 +223,8 @@ class PromptIR(DomainModel):
     visual_tag_adjudication: Dict[str, Any] = Field(default_factory=dict)
     danbooru_tag_records: List[Dict[str, Any]] = Field(default_factory=list)
     repair_overlay: Dict[str, Any] = Field(default_factory=dict)
+    enrichment_overlay: Dict[str, Any] = Field(default_factory=dict)
+    constraint_overlay: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ValidationIssue(DomainModel):

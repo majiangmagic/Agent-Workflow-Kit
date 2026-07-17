@@ -115,6 +115,8 @@ def extract_workflow_memory(final_state: Dict[str, Any]) -> Dict[str, Any]:
                 memory["scene_document"] = document
                 newest_document_version = version
         prompt_ir = node_state.get("resolved_prompt_ir")
+        if not isinstance(prompt_ir, dict):
+            prompt_ir = node_state.get("previous_resolved_prompt_ir")
         if isinstance(prompt_ir, dict):
             version = int(prompt_ir.get("document_version") or 0)
             if version >= newest_ir_version:

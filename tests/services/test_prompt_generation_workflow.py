@@ -31,6 +31,7 @@ from app.agents.prompt_generation.scene_document_editor.nodes import (
     _append_required_facts,
     _fallback_patch,
     _is_unhelpful_initial_clarification,
+    _load_previous_memory,
 )
 from app.agents.prompt_generation.visual_semantic_resolver.nodes import (
     _fallback_relation_terms,
@@ -168,6 +169,18 @@ def test_patch_normalizes_common_entity_field_aliases_and_null_lists():
     ]
 
 
+def test_patch_rejects_non_english_constraint_overlay_values():
+    with pytest.raises(ValueError, match="constraint overlay values"):
+        validate_patch_proposal(
+            {
+                "base_version": 0,
+                "operations": [],
+                "add_negative_constraints": ["不要开心表情"],
+            },
+            0,
+        )
+
+
 def test_patch_rejects_dangling_participant_relations():
     document = sample_document()
     proposal = validate_patch_proposal(
@@ -182,6 +195,37 @@ def test_patch_rejects_dangling_participant_relations():
 
     with pytest.raises(ValueError, match="missing participant"):
         apply_patch_proposal(document, proposal)
+
+
+def test_relation_normalization_accepts_structured_endpoints_and_action_alias():
+    document = normalize_scene_document(
+        {
+            "participants": {
+                "p1": {"type": "generic_person", "label": "woman"},
+                "o1": {"type": "object", "label": "glass"},
+            },
+            "relations": {
+                "r1": {
+                    "subject": {"id": "p1", "kind": "participant"},
+                    "object": {"id": "o1", "kind": "participant"},
+                    "action": "pressed_against",
+                }
+            },
+        }
+    )
+
+    assert document["relations"]["r1"] == {
+        "id": "r1",
+        "subject": "p1",
+        "predicate": "pressed_against",
+        "object": "o1",
+        "instrument": "",
+        "source": "",
+        "body_region": "",
+        "details": [],
+        "subject_kind": "participant",
+        "object_kind": "participant",
+    }
 
 
 def test_identity_only_change_does_not_invalidate_visual_resolution():
@@ -761,6 +805,166 @@ def test_extract_workflow_memory_prefers_scene_document_contract():
 
     assert memory["scene_document"]["version"] == 3
     assert memory["resolved_prompt_ir"]["document_version"] == 3
+
+
+def test_extract_workflow_memory_preserves_previous_ir_on_clarification_path():
+    document = sample_document(version=4)
+    memory = extract_workflow_memory(
+        {
+            "nodes": {
+                "editor": {
+                    "scene_document": document,
+                    "previous_resolved_prompt_ir": {
+                        "document_version": 4,
+                        "identity_terms": [{"value": "elaina_tag"}],
+                    },
+                },
+                "renderer": {"scene_document": document},
+            }
+        }
+    )
+
+    assert memory["resolved_prompt_ir"]["identity_terms"] == [
+        {"value": "elaina_tag"}
+    ]
+
+
+def test_editor_loads_document_and_ir_from_different_recent_messages():
+    document = sample_document(version=4)
+    loaded_document, loaded_ir = _load_previous_memory(
+        {
+            "messages": [
+                AIMessage(
+                    content="valid prompt",
+                    additional_kwargs={
+                        "workflow_memory": {
+                            "scene_document": sample_document(version=3),
+                            "resolved_prompt_ir": {
+                                "document_version": 3,
+                                "identity_terms": [{"value": "elaina_tag"}],
+                            },
+                        }
+                    },
+                ),
+                AIMessage(
+                    content="clarification",
+                    additional_kwargs={
+                        "workflow_memory": {"scene_document": document}
+                    },
+                ),
+            ]
+        }
+    )
+
+    assert loaded_document["version"] == 4
+    assert loaded_ir["document_version"] == 3
+
+
+def test_enrichment_overlay_rejection_filters_inferred_prompt_term():
+    document = sample_document(version=2)
+    first = compile_prompt_node(
+        {
+            "scene_document": document,
+            "previous_resolved_prompt_ir": {},
+            "impact_set": {},
+            "identity_terms": [],
+            "atomic_terms": [
+                {
+                    "value": "happy expression",
+                    "kind": "descriptive_phrase",
+                    "source_path": "/composition/style/0",
+                    "inferred": True,
+                }
+            ],
+            "relation_terms": [],
+            "negative_terms": [],
+        }
+    )["resolved_prompt_ir"]
+    enrichment_id = next(iter(first["enrichment_overlay"]["entries"]))
+    first["enrichment_overlay"]["entries"][enrichment_id]["status"] = "rejected"
+
+    second = compile_prompt_node(
+        {
+            "scene_document": document,
+            "previous_resolved_prompt_ir": first,
+            "impact_set": {"rejected_enrichment_ids": [enrichment_id]},
+        }
+    )["resolved_prompt_ir"]
+
+    assert second["positive_terms"] == []
+    assert second["enrichment_overlay"]["entries"][enrichment_id]["status"] == "rejected"
+
+
+def test_processor_marks_enrichment_as_rejected_without_scene_replacement():
+    document = sample_document(version=2)
+    previous_ir = {
+        "document_version": 2,
+        "identity_terms": [],
+        "enrichment_overlay": {
+            "version": 1,
+            "entries": {
+                "enr_happy": {
+                    "id": "enr_happy",
+                    "value": "happy expression",
+                    "status": "active",
+                }
+            },
+        },
+    }
+    result = apply_patch_node(
+        {
+            "previous_scene_document": document,
+            "previous_resolved_prompt_ir": previous_ir,
+            "patch_proposal": {
+                "base_version": 2,
+                "operations": [],
+                "rejected_enrichment_ids": ["enr_happy"],
+            },
+        }
+    )
+
+    entry = result["previous_resolved_prompt_ir"]["enrichment_overlay"]["entries"][
+        "enr_happy"
+    ]
+    assert entry["status"] == "rejected"
+    assert result["impact_set"]["visual_changed"] is True
+
+
+def test_user_feedback_constraints_are_persisted_and_compiled():
+    document = sample_document(version=2)
+    processed = apply_patch_node(
+        {
+            "previous_scene_document": document,
+            "previous_resolved_prompt_ir": {
+                "document_version": 2,
+                "identity_terms": [],
+                "atomic_terms": [],
+                "relation_terms": [],
+                "negative_terms": [],
+            },
+            "patch_proposal": {
+                "base_version": 2,
+                "operations": [],
+                "add_positive_constraints": ["tense distressed expression"],
+                "add_negative_constraints": ["happy expression", "smile"],
+            },
+        }
+    )
+    compiled = compile_prompt_node(
+        {
+            "scene_document": document,
+            "previous_resolved_prompt_ir": processed["previous_resolved_prompt_ir"],
+            "impact_set": processed["impact_set"],
+        }
+    )["resolved_prompt_ir"]
+
+    assert "tense distressed expression" in [
+        item["value"] for item in compiled["positive_terms"]
+    ]
+    assert {"happy expression", "smile"}.issubset(
+        {item["value"] for item in compiled["compiled_negative_terms"]}
+    )
+    assert compiled["constraint_overlay"]["version"] == 1
 
 
 def test_clear_result_complaint_falls_back_to_safe_emphasis_patch():

@@ -13,6 +13,15 @@ from app.agents.prompt_generation.scene_document_processor.state import SceneDoc
 # - 新 DSL 删除某个节点名时，对应代码块会被删除，不会因为里面有人写过代码而保留。
 
 # <agent-node name="apply_patch">
+import hashlib
+
+
+def _constraint_id(polarity: str, value: str) -> str:
+    normalized = " ".join(value.strip().casefold().replace("_", " ").split())
+    payload = f"{polarity}|{normalized}".encode("utf-8")
+    return "con_" + hashlib.sha1(payload).hexdigest()[:16]
+
+
 def apply_patch_node(
     state: SceneDocumentProcessorState,
     config: RunnableConfig | None = None,
@@ -37,6 +46,7 @@ def apply_patch_node(
     error = ""
     clarification = state.get("clarification_request")
     clarification_options = list(state.get("clarification_options") or [])
+    proposal = {"rejected_enrichment_ids": []}
     try:
         proposal = validate_patch_proposal(
             state.get("patch_proposal") or {},
@@ -51,7 +61,63 @@ def apply_patch_node(
         )
 
     impact = compute_impact_set(previous, current)
-    previous_ir = state.get("previous_resolved_prompt_ir") or {}
+    previous_ir = dict(state.get("previous_resolved_prompt_ir") or {})
+    overlay = dict(previous_ir.get("enrichment_overlay") or {})
+    overlay_entries = {
+        key: dict(value)
+        for key, value in (overlay.get("entries") or {}).items()
+        if isinstance(value, dict)
+    }
+    rejected_enrichment_ids = list(proposal.get("rejected_enrichment_ids") or [])
+    for enrichment_id in rejected_enrichment_ids:
+        if enrichment_id not in overlay_entries:
+            continue
+        overlay_entries[enrichment_id]["status"] = "rejected"
+        overlay_entries[enrichment_id]["rejected_by"] = "user"
+        overlay_entries[enrichment_id]["rejected_at_document_version"] = int(
+            current.get("version") or previous.get("version") or 0
+        )
+    if overlay_entries:
+        previous_ir["enrichment_overlay"] = {
+            "version": int(overlay.get("version") or 0) + bool(rejected_enrichment_ids),
+            "entries": overlay_entries,
+        }
+    constraint_overlay = dict(previous_ir.get("constraint_overlay") or {})
+    constraint_entries = {
+        key: dict(value)
+        for key, value in (constraint_overlay.get("entries") or {}).items()
+        if isinstance(value, dict)
+    }
+    constraints_changed = False
+    for polarity, values in (
+        ("positive", proposal.get("add_positive_constraints") or []),
+        ("negative", proposal.get("add_negative_constraints") or []),
+    ):
+        for value in values:
+            text = str(value or "").strip()
+            if not text:
+                continue
+            constraint_id = _constraint_id(polarity, text)
+            constraint_entries[constraint_id] = {
+                "id": constraint_id,
+                "value": text,
+                "polarity": polarity,
+                "status": "active",
+                "source": "user_feedback",
+                "created_document_version": int(current.get("version") or 0),
+            }
+            constraints_changed = True
+    for constraint_id in proposal.get("removed_constraint_ids") or []:
+        if constraint_id in constraint_entries:
+            constraint_entries[constraint_id]["status"] = "removed"
+            constraint_entries[constraint_id]["removed_by"] = "user"
+            constraints_changed = True
+    if constraint_entries:
+        previous_ir["constraint_overlay"] = {
+            "version": int(constraint_overlay.get("version") or 0)
+            + bool(constraints_changed),
+            "entries": constraint_entries,
+        }
     previous_participants = previous.get("participants") or {}
     current_participants = current.get("participants") or {}
     current_names = {
@@ -87,6 +153,12 @@ def apply_patch_node(
             ]
         )
     )
+    impact["rejected_enrichment_ids"] = rejected_enrichment_ids
+    if rejected_enrichment_ids:
+        impact["visual_changed"] = True
+    impact["constraints_changed"] = constraints_changed
+    if constraints_changed:
+        impact["visual_changed"] = True
     return {
         "previous_scene_document": previous,
         "scene_document": current,

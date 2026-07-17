@@ -167,16 +167,35 @@ def _normalize_relations(
         return {}
     result: Dict[str, Dict[str, Any]] = {}
     known_participants = set(participant_ids)
+
+    def endpoint(raw: Any) -> tuple[str, str]:
+        if isinstance(raw, dict):
+            endpoint_id = str(
+                raw.get("id")
+                or raw.get("participant_id")
+                or raw.get("value")
+                or ""
+            ).strip()
+            endpoint_kind = str(raw.get("kind") or "").strip()
+            return endpoint_id, endpoint_kind
+        return str(raw or "").strip(), ""
+
     for index, (raw_id, raw_item) in enumerate(value.items(), start=1):
         if not isinstance(raw_item, dict):
             continue
         relation_id = str(raw_id or f"relation_{index}").strip()
-        subject = str(raw_item.get("subject") or "").strip()
-        object_value = str(raw_item.get("object") or "").strip()
+        subject, nested_subject_kind = endpoint(raw_item.get("subject"))
+        object_value, nested_object_kind = endpoint(raw_item.get("object"))
         result[relation_id] = {
             "id": relation_id,
             "subject": subject,
-            "predicate": str(raw_item.get("predicate") or "").strip(),
+            "predicate": str(
+                raw_item.get("predicate")
+                or raw_item.get("action")
+                or raw_item.get("relation")
+                or raw_item.get("type")
+                or ""
+            ).strip(),
             "object": object_value,
             "instrument": str(raw_item.get("instrument") or "").strip(),
             "source": str(raw_item.get("source") or "").strip(),
@@ -184,10 +203,12 @@ def _normalize_relations(
             "details": text_list(raw_item.get("details")),
             "subject_kind": str(
                 raw_item.get("subject_kind")
+                or nested_subject_kind
                 or ("participant" if subject in known_participants else "external")
             ),
             "object_kind": str(
                 raw_item.get("object_kind")
+                or nested_object_kind
                 or ("participant" if object_value in known_participants else "external")
             ),
         }
@@ -270,7 +291,16 @@ def validate_patch_proposal(value: Any, current_version: int) -> Dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("PatchProposal must be an object")
     value = deepcopy(value)
-    for field in ("operations", "touched_paths", "clarification_options", "detected_entities"):
+    for field in (
+        "operations",
+        "touched_paths",
+        "clarification_options",
+        "detected_entities",
+        "rejected_enrichment_ids",
+        "add_positive_constraints",
+        "add_negative_constraints",
+        "removed_constraint_ids",
+    ):
         if value.get(field) is None:
             value[field] = []
     for entity in value.get("detected_entities") or []:
@@ -346,6 +376,10 @@ def validate_patch_proposal(value: Any, current_version: int) -> Dict[str, Any]:
         "detected_entities": [
             item.model_dump(mode="python") for item in patch.detected_entities
         ],
+        "rejected_enrichment_ids": list(patch.rejected_enrichment_ids),
+        "add_positive_constraints": list(patch.add_positive_constraints),
+        "add_negative_constraints": list(patch.add_negative_constraints),
+        "removed_constraint_ids": list(patch.removed_constraint_ids),
     }
 
 

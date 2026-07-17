@@ -103,6 +103,8 @@ def _load_previous_memory(state: SceneDocumentEditorState) -> tuple[Dict[str, An
     previous_ir = state.get("previous_resolved_prompt_ir")
     if isinstance(current, dict):
         return normalize_scene_document(current), dict(previous_ir or {})
+    latest_document = None
+    latest_ir = None
     for message in reversed(state.get("messages") or []):
         if getattr(message, "type", "") != "ai":
             continue
@@ -110,12 +112,32 @@ def _load_previous_memory(state: SceneDocumentEditorState) -> tuple[Dict[str, An
             "workflow_memory"
         ) or {}
         document = memory.get("scene_document")
-        if isinstance(document, dict):
-            return (
-                normalize_scene_document(document),
-                dict(memory.get("resolved_prompt_ir") or {}),
-            )
-    return empty_scene_document(), {}
+        prompt_ir = memory.get("resolved_prompt_ir")
+        if latest_document is None and isinstance(document, dict):
+            latest_document = normalize_scene_document(document)
+        if latest_ir is None and isinstance(prompt_ir, dict):
+            latest_ir = dict(prompt_ir)
+        if latest_document is not None and latest_ir is not None:
+            break
+    return latest_document or empty_scene_document(), latest_ir or {}
+
+
+def _active_enrichments(prompt_ir: Dict[str, Any]) -> list[Dict[str, Any]]:
+    entries = (prompt_ir.get("enrichment_overlay") or {}).get("entries") or {}
+    return [
+        dict(entry)
+        for entry in entries.values()
+        if isinstance(entry, dict) and entry.get("status") == "active"
+    ]
+
+
+def _active_constraints(prompt_ir: Dict[str, Any]) -> list[Dict[str, Any]]:
+    entries = (prompt_ir.get("constraint_overlay") or {}).get("entries") or {}
+    return [
+        dict(entry)
+        for entry in entries.values()
+        if isinstance(entry, dict) and entry.get("status") == "active"
+    ]
 
 
 def _fallback_patch(
@@ -284,7 +306,9 @@ async def propose_patch_node(
 SceneDocument is the sole source of truth. The latest user message edits that
 document; it is not an instruction to append words to a previous Prompt. Return
 one JSON object with request_id, base_version, intent, operations, touched_paths,
-detected_entities, clarification and clarification_options. Every operation uses
+detected_entities, rejected_enrichment_ids, add_positive_constraints,
+add_negative_constraints, removed_constraint_ids, clarification and
+clarification_options. Every operation uses
 op (add, replace or remove), path, value when required, and evidence.
 
 Use stable participant and relation IDs. Replacing a character identity should
@@ -312,6 +336,18 @@ Relation endpoints that reference participants use their stable IDs and set
 subject_kind or object_kind to participant; external endpoints use external.
 When a reference is genuinely ambiguous, return no operations and place a short
 question in clarification instead of guessing.
+Active enrichments are model-added details visible in the last Prompt but absent
+from SceneDocument. When the user criticizes or removes one, put its exact id in
+rejected_enrichment_ids instead of replacing a nonexistent SceneDocument path.
+When clear, also add a durable forbidden or required SceneDocument constraint so
+future enrichment cannot reintroduce the same unwanted meaning.
+When feedback targets something visible in the generated image but absent from
+both SceneDocument and active enrichments, it is still an executable correction.
+Use concise English add_negative_constraints for unwanted meanings and
+add_positive_constraints for the desired replacement. Never replace a nonexistent
+SceneDocument path and never ask a generic clarification when the unwanted result
+is clear. Use removed_constraint_ids when the user explicitly cancels a prior
+constraint.
 When clarification is required, ask in the user's language and provide 2-4 short,
 mutually exclusive clarification_options when concrete choices are available.
 detected_entities must list every explicitly named character, generic person,
@@ -322,6 +358,10 @@ for minors or age-ambiguous participants."""
     model_input = (
         "Current SceneDocument:\n"
         f"{json.dumps(document, ensure_ascii=False)}\n\n"
+        "Active enrichment overlay:\n"
+        f"{json.dumps(_active_enrichments(previous_ir), ensure_ascii=False)}\n\n"
+        "Active constraint overlay:\n"
+        f"{json.dumps(_active_constraints(previous_ir), ensure_ascii=False)}\n\n"
         f"Latest user message:\n{user_input}\n\n"
         "Return only the PatchProposal JSON."
     )

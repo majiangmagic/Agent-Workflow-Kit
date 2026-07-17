@@ -182,6 +182,9 @@ render is a correction, not positive depicted content.
 Strategy is {strategy}. In faithful mode emit only explicit document facts. In
 expressive mode you may add at most 8 useful visual refinements, mark them
 inferred=true, and never add identities, participants, core actions or relations.
+Active constraint_overlay entries are user-authored requirements and prohibitions.
+Never infer content that conflicts with an active negative constraint, and treat
+active positive constraints as explicit facts that must be represented.
 Use concise English phrases suitable for image prompting."""
     if incremental:
         system_prompt += (
@@ -204,6 +207,9 @@ Use concise English phrases suitable for image prompting."""
                     content=json.dumps(
                         {
                             "scene_document": document,
+                            "constraint_overlay": (
+                                previous_ir.get("constraint_overlay") or {}
+                            ),
                             "changed_paths": touched_paths if incremental else ["/"],
                         },
                         ensure_ascii=False,

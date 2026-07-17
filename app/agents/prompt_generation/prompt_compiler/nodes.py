@@ -13,6 +13,7 @@ from app.agents.prompt_generation.prompt_compiler.state import PromptCompilerSta
 # - 新 DSL 删除某个节点名时，对应代码块会被删除，不会因为里面有人写过代码而保留。
 
 # <agent-node name="compile_prompt">
+import hashlib
 import re
 
 
@@ -53,6 +54,18 @@ def _overlay_entry(item: Any, polarity: str) -> Dict[str, Any]:
     }
 
 
+def _enrichment_id(item: Dict[str, Any]) -> str:
+    identity = "|".join(
+        [
+            str(item.get("source_path") or ""),
+            str(item.get("participant_id") or ""),
+            str(item.get("kind") or ""),
+            _key(item.get("value")),
+        ]
+    )
+    return "enr_" + hashlib.sha1(identity.encode("utf-8")).hexdigest()[:16]
+
+
 def compile_prompt_node(
     state: PromptCompilerState,
     config: RunnableConfig | None = None,
@@ -73,6 +86,106 @@ def compile_prompt_node(
     positive = _entries([*identity_terms, *atomic_terms, *relation_terms])
     negative = _entries(negative_terms)
     impact = state.get("impact_set") or {}
+
+    previous_overlay = dict(previous_ir.get("enrichment_overlay") or {})
+    previous_entries = {
+        key: dict(value)
+        for key, value in (previous_overlay.get("entries") or {}).items()
+        if isinstance(value, dict)
+    }
+    current_entries: Dict[str, Dict[str, Any]] = {}
+    for item in positive:
+        if not item.get("inferred"):
+            continue
+        enrichment_id = _enrichment_id(item)
+        previous_entry = previous_entries.get(enrichment_id) or {}
+        current_entries[enrichment_id] = {
+            "id": enrichment_id,
+            "value": item["value"],
+            "kind": str(item.get("kind") or "descriptive_phrase"),
+            "source_path": str(item.get("source_path") or ""),
+            "participant_id": str(item.get("participant_id") or ""),
+            "status": (
+                "rejected"
+                if previous_entry.get("status") == "rejected"
+                else "active"
+            ),
+            "created_document_version": int(
+                previous_entry.get("created_document_version") or 0
+            ),
+            **(
+                {
+                    "rejected_by": previous_entry.get("rejected_by"),
+                    "rejected_at_document_version": previous_entry.get(
+                        "rejected_at_document_version"
+                    ),
+                }
+                if previous_entry.get("status") == "rejected"
+                else {}
+            ),
+        }
+        if not current_entries[enrichment_id]["created_document_version"]:
+            current_entries[enrichment_id]["created_document_version"] = int(
+                (state.get("scene_document") or {}).get("version") or 0
+            )
+    for enrichment_id, entry in previous_entries.items():
+        if entry.get("status") == "rejected" and enrichment_id not in current_entries:
+            current_entries[enrichment_id] = entry
+    rejected_enrichment_ids = {
+        enrichment_id
+        for enrichment_id, entry in current_entries.items()
+        if entry.get("status") == "rejected"
+    }
+    positive = [
+        item
+        for item in positive
+        if not item.get("inferred") or _enrichment_id(item) not in rejected_enrichment_ids
+    ]
+    constraint_overlay = dict(previous_ir.get("constraint_overlay") or {})
+    constraint_entries = {
+        key: dict(value)
+        for key, value in (constraint_overlay.get("entries") or {}).items()
+        if isinstance(value, dict)
+    }
+    active_constraints = [
+        entry
+        for entry in constraint_entries.values()
+        if entry.get("status") == "active" and str(entry.get("value") or "").strip()
+    ]
+    positive = _entries(
+        [
+            *positive,
+            *[
+                {
+                    "value": entry["value"],
+                    "kind": "user_constraint",
+                    "polarity": "positive",
+                    "source_path": f"/constraint_overlay/{entry['id']}",
+                    "provenance": "user_feedback",
+                    "inferred": False,
+                }
+                for entry in active_constraints
+                if entry.get("polarity") == "positive"
+            ],
+        ]
+    )
+    negative = _entries(
+        [
+            *negative,
+            *[
+                {
+                    "value": entry["value"],
+                    "kind": "user_constraint",
+                    "polarity": "negative",
+                    "source_path": f"/constraint_overlay/{entry['id']}",
+                    "provenance": "user_feedback",
+                    "inferred": False,
+                }
+                for entry in active_constraints
+                if entry.get("polarity") == "negative"
+            ],
+        ]
+    )
 
     removed_keys = {_key(value) for value in impact.get("removed_identity_terms") or []}
     positive = [
@@ -145,6 +258,14 @@ def compile_prompt_node(
         "visual_tag_adjudication": dict(current_or_previous("visual_tag_adjudication") or {}),
         "danbooru_tag_records": records,
         "repair_overlay": dict(overlay),
+        "enrichment_overlay": {
+            "version": int(previous_overlay.get("version") or 0),
+            "entries": current_entries,
+        },
+        "constraint_overlay": {
+            "version": int(constraint_overlay.get("version") or 0),
+            "entries": constraint_entries,
+        },
     }
     from app.agents.prompt_generation.models import PromptIR
 
