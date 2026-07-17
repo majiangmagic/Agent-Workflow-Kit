@@ -7,7 +7,6 @@ export function useWorkflowStream() {
   const [nodeStatuses, setNodeStatuses] = useState<Record<string, NodeStatus>>({});
   const [nodeDurations, setNodeDurations] = useState<Record<string, number>>({});
   const [selectedEdges, setSelectedEdges] = useState<Record<string, EdgeSelection>>({});
-  const [executionKey, setExecutionKey] = useState(0);
   const controllerRef = useRef<AbortController | null>(null);
   const nodeStartedAt = useRef<Record<string, number>>({});
 
@@ -19,7 +18,6 @@ export function useWorkflowStream() {
     setNodeStatuses({});
     setNodeDurations({});
     setSelectedEdges({});
-    setExecutionKey((current) => current + 1);
     nodeStartedAt.current = {};
   }, []);
   const cancel = useCallback(() => controllerRef.current?.abort(), []);
@@ -33,7 +31,6 @@ export function useWorkflowStream() {
       setNodeStatuses({});
       setNodeDurations({});
       setSelectedEdges({});
-      setExecutionKey((current) => current + 1);
       nodeStartedAt.current = {};
       try {
         return await streamChat(
@@ -95,7 +92,6 @@ export function useWorkflowStream() {
     nodeStatuses,
     nodeDurations,
     selectedEdges,
-    executionKey,
     run,
     clear,
     cancel,

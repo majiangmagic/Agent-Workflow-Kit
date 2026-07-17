@@ -18,6 +18,53 @@ import json
 import re
 
 
+CORRECTION_MARKERS = (
+    "不够",
+    "不明显",
+    "没体现",
+    "没有体现",
+    "不像",
+    "仍然",
+    "还是",
+    "加强",
+    "强调",
+    "更明显",
+    "在哪里",
+    "哪去了",
+    "没看到",
+    "没有看到",
+    "未看到",
+    "没出现",
+    "没有出现",
+    "未出现",
+    "没生成",
+    "没有生成",
+    "缺少",
+    "缺了",
+    "漏了",
+    "丢了",
+    "补充",
+    "补上",
+    "重新尝试",
+    "上一条修改",
+    "not enough",
+    "not visible",
+    "cannot see",
+    "can't see",
+    "missing",
+    "where is",
+    "add back",
+    "still",
+    "emphasize",
+    "stronger",
+)
+
+
+def _is_clear_correction(user_input: str) -> bool:
+    normalized = user_input.strip().casefold()
+    return bool(normalized) and any(marker in normalized for marker in CORRECTION_MARKERS)
+
+
 def _parse_object(text: str) -> Dict[str, Any]:
     match = re.search(r"\{[\s\S]*\}", text.strip())
     value = json.loads(match.group(0) if match else text)
@@ -51,7 +98,28 @@ def _load_previous_memory(state: SceneDocumentEditorState) -> tuple[Dict[str, An
 def _fallback_patch(
     document: Dict[str, Any], user_input: str, request_id: str = ""
 ) -> Dict[str, Any]:
-    """Preserve the document and expose a clarification instead of inventing facts."""
+    """Preserve corrections safely; ask only when the edit is genuinely unclear."""
+
+    if (
+        int(document.get("version") or 0) > 0
+        and _is_clear_correction(user_input)
+    ):
+        return {
+            "base_version": int(document.get("version") or 0),
+            "request_id": request_id,
+            "intent": "preserve_and_emphasize",
+            "operations": [
+                {
+                    "op": "add",
+                    "path": "/requirements/required/-",
+                    "value": user_input.strip(),
+                    "evidence": user_input.strip(),
+                }
+            ],
+            "touched_paths": ["/requirements/required/-"],
+            "clarification": None,
+            "clarification_options": [],
+        }
 
     return {
         "base_version": int(document.get("version") or 0),
@@ -59,8 +127,112 @@ def _fallback_patch(
         "intent": "needs_clarification",
         "operations": [],
         "touched_paths": [],
-        "clarification": "I could not apply this edit reliably. Please restate the intended change.",
+        "clarification": "本轮修改没有形成有效的画面补丁。请补充说明要改变的画面部分，或重新尝试。",
+        "clarification_options": [],
     }
+
+
+async def _audit_initial_coverage(
+    model: Any,
+    user_input: str,
+    candidate_document: Dict[str, Any],
+) -> list[str]:
+    """Find explicit first-turn facts lost while structuring the scene."""
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    from app.agents.prompt_generation.models import SceneCoverageAudit
+
+    response = await asyncio.wait_for(
+        model.ainvoke(
+            [
+                SystemMessage(
+                    content="""Audit source fidelity for a structured image scene.
+Compare the user's request with the candidate SceneDocument. Return JSON with
+complete, missing_facts and reason. missing_facts contains only concise visual
+facts explicitly stated by the user but absent from the document. Treat
+participants, objects, actions, relations, body regions, clothing state,
+environment, composition and style as independently required facts. Do not add
+interpretations or inferred details. Ignore wording differences when the same
+meaning is already represented. Return only the JSON object."""
+                ),
+                HumanMessage(
+                    content=json.dumps(
+                        {
+                            "user_request": user_input,
+                            "candidate_scene_document": candidate_document,
+                        },
+                        ensure_ascii=False,
+                    )
+                ),
+            ]
+        ),
+        timeout=75,
+    )
+    audit = SceneCoverageAudit.model_validate(_parse_object(str(response.content)))
+    return list(dict.fromkeys(value.strip() for value in audit.missing_facts if value.strip()))
+
+
+def _append_required_facts(
+    proposal: Dict[str, Any], facts: list[str]
+) -> Dict[str, Any]:
+    if not facts:
+        return proposal
+    result = dict(proposal)
+    operations = list(result.get("operations") or [])
+    touched_paths = list(result.get("touched_paths") or [])
+    root_operation = next(
+        (
+            operation
+            for operation in operations
+            if operation.get("path") in {"", "/"}
+            and operation.get("op") in {"add", "replace"}
+            and isinstance(operation.get("value"), dict)
+        ),
+        None,
+    )
+    if root_operation is not None:
+        requirements = root_operation["value"].setdefault("requirements", {})
+        required = requirements.setdefault("required", [])
+        if not isinstance(required, list):
+            required = requirements["required"] = [str(required)]
+        required.extend(fact for fact in facts if fact not in required)
+        result["operations"] = operations
+        result["touched_paths"] = list(
+            dict.fromkeys([*touched_paths, "/requirements/required/-"])
+        )
+        return result
+    for fact in facts:
+        operations.append(
+            {
+                "op": "add",
+                "path": "/requirements/required/-",
+                "value": fact,
+                "evidence": fact,
+            }
+        )
+    result["operations"] = operations
+    result["touched_paths"] = list(
+        dict.fromkeys([*touched_paths, "/requirements/required/-"])
+    )
+    return result
+
+
+def _visual_fact_count(document: Dict[str, Any]) -> int:
+    count = len(document.get("relations") or {})
+    for participant in (document.get("participants") or {}).values():
+        count += sum(
+            len(participant.get(key) or [])
+            for key in ("appearance", "clothing", "expressions", "poses", "actions")
+        )
+    environment = document.get("environment") or {}
+    count += sum(bool(environment.get(key)) for key in ("location", "time", "weather"))
+    count += len(environment.get("background") or [])
+    composition = document.get("composition") or {}
+    count += sum(len(composition.get(key) or []) for key in composition)
+    requirements = document.get("requirements") or {}
+    count += sum(len(requirements.get(key) or []) for key in requirements)
+    return count
 
 
 async def propose_patch_node(
@@ -89,7 +261,7 @@ async def propose_patch_node(
 SceneDocument is the sole source of truth. The latest user message edits that
 document; it is not an instruction to append words to a previous Prompt. Return
 one JSON object with request_id, base_version, intent, operations, touched_paths,
-detected_entities and clarification. Every operation uses
+detected_entities, clarification and clarification_options. Every operation uses
 op (add, replace or remove), path, value when required, and evidence.
 
 Use stable participant and relation IDs. Replacing a character identity should
@@ -106,10 +278,14 @@ Every participant must use one type: named_character, generic_person, animal,
 role or object. Only named_character has a character identity and it must have a
 non-empty identity.input_name. Animals, generic people and roles such as a
 camera operator must never be represented as named character identities.
+Every participant must also have a concise label preserving what the user called
+it, such as glass, dog, camera operator or woman. label is not an identity tag.
 Relation endpoints that reference participants use their stable IDs and set
 subject_kind or object_kind to participant; external endpoints use external.
 When a reference is genuinely ambiguous, return no operations and place a short
 question in clarification instead of guessing.
+When clarification is required, ask in the user's language and provide 2-4 short,
+mutually exclusive clarification_options when concrete choices are available.
 detected_entities must list every explicitly named character, generic person,
 animal, role, object or location in the latest request. Every named_character
 must have bound_id set to its SceneDocument participant ID.
@@ -146,7 +322,22 @@ for minors or age-ambiguous participants."""
                     raw_proposal,
                     int(document.get("version") or 0),
                 )
-                apply_patch_proposal(document, proposal)
+                candidate = apply_patch_proposal(document, proposal)
+                if int(document.get("version") or 0) == 0 and proposal.get("operations"):
+                    try:
+                        missing_facts = await _audit_initial_coverage(
+                            model, user_input, candidate
+                        )
+                    except Exception:
+                        missing_facts = (
+                            [user_input] if _visual_fact_count(candidate) < 2 else []
+                        )
+                    if missing_facts:
+                        proposal = validate_patch_proposal(
+                            _append_required_facts(proposal, missing_facts),
+                            int(document.get("version") or 0),
+                        )
+                        candidate = apply_patch_proposal(document, proposal)
                 break
             except Exception as exc:
                 error = str(exc)
@@ -166,6 +357,7 @@ for minors or age-ambiguous participants."""
         "previous_resolved_prompt_ir": previous_ir,
         "patch_proposal": proposal,
         "clarification_request": proposal.get("clarification"),
+        "clarification_options": list(proposal.get("clarification_options") or []),
         "editor_error": error,
         "messages": [
             AIMessage(content="画面修改已转换为结构化 Patch。", name="scene_document_editor")

@@ -27,10 +27,14 @@ from app.agents.prompt_generation.prompt_consistency_validator.nodes import (
 )
 from app.agents.prompt_generation.prompt_target_renderer.nodes import render_prompt_node
 from app.agents.prompt_generation.scene_document_processor.nodes import apply_patch_node
+from app.agents.prompt_generation.scene_document_editor.nodes import (
+    _append_required_facts,
+    _fallback_patch,
+)
 from app.agents.prompt_generation.visual_semantic_resolver.nodes import (
     resolve_visual_semantics_node,
 )
-from app.api.routes.conversation import extract_workflow_memory
+from app.api.routes.conversation import extract_workflow_memory, extract_workflow_result
 from app.core.langgraph.workflows.prompt_generation_workflow.graph import (
     WORKFLOW_METADATA,
     create_prompt_generation_workflow_graph,
@@ -685,6 +689,112 @@ def test_extract_workflow_memory_prefers_scene_document_contract():
 
     assert memory["scene_document"]["version"] == 3
     assert memory["resolved_prompt_ir"]["document_version"] == 3
+
+
+def test_clear_result_complaint_falls_back_to_safe_emphasis_patch():
+    proposal = _fallback_patch(
+        sample_document(version=2),
+        "玻璃不够明显，像压在空气上",
+        "request-1",
+    )
+
+    assert proposal["intent"] == "preserve_and_emphasize"
+    assert proposal["clarification"] is None
+    assert proposal["operations"] == [
+        {
+            "op": "add",
+            "path": "/requirements/required/-",
+            "value": "玻璃不够明显，像压在空气上",
+            "evidence": "玻璃不够明显，像压在空气上",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "被推在玻璃上的行为在哪里",
+        "生成结果没有看到玻璃上的挤压行为，补充这一段",
+        "这个核心动作漏了，请补上",
+        "请重新尝试应用我上一条修改要求，其他画面内容保持不变",
+    ],
+)
+def test_natural_missing_feedback_is_an_executable_correction(message):
+    proposal = _fallback_patch(sample_document(version=2), message, "request-2")
+
+    assert proposal["intent"] == "preserve_and_emphasize"
+    assert proposal["clarification"] is None
+    assert proposal["operations"][0]["value"] == message
+
+
+def test_initial_coverage_facts_are_merged_into_root_document_patch():
+    proposal = {
+        "base_version": 0,
+        "intent": "create",
+        "operations": [
+            {
+                "op": "replace",
+                "path": "/",
+                "value": empty_scene_document(),
+                "evidence": "create scene",
+            }
+        ],
+        "touched_paths": ["/"],
+    }
+
+    amended = _append_required_facts(
+        proposal,
+        ["character is pushed against glass", "chest is compressed by glass"],
+    )
+    document = apply_patch_proposal(
+        empty_scene_document(), validate_patch_proposal(amended, 0)
+    )
+
+    assert document["requirements"]["required"] == [
+        "character is pushed against glass",
+        "chest is compressed by glass",
+    ]
+
+
+def test_non_identity_participant_label_survives_normalization():
+    document = normalize_scene_document(
+        {
+            "participants": {
+                "glass": {"type": "object", "name": "transparent glass"}
+            }
+        }
+    )
+
+    assert document["participants"]["glass"]["label"] == "transparent glass"
+
+
+def test_ambiguous_fallback_returns_structured_clarification():
+    proposal = _fallback_patch(sample_document(version=2), "把她换一下")
+
+    assert proposal["intent"] == "needs_clarification"
+    assert proposal["operations"] == []
+    assert proposal["clarification"]
+    assert proposal["clarification_options"] == []
+
+
+def test_renderer_and_api_expose_structured_clarification_metadata():
+    rendered = render_prompt_node(
+        {
+            "scene_document": sample_document(version=2),
+            "resolved_prompt_ir": {},
+            "validation_report": {},
+            "clarification_request": "你指的是哪名角色？",
+            "clarification_options": ["左侧角色", "右侧角色"],
+            "workflow_inputs": {"target_model": "nai_v4"},
+        }
+    )
+    result = extract_workflow_result({"nodes": {"target_renderer": rendered}})
+
+    assert rendered["final_output"]["status"] == "needs_clarification"
+    assert result["clarification_request"] == {
+        "question": "你指的是哪名角色？",
+        "options": ["左侧角色", "右侧角色"],
+    }
 
 
 def test_explicit_named_character_requires_an_identity_name():

@@ -216,6 +216,18 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .message.user .message-surface { border-color: #b8d9c9; background: #eaf7f0; }
 .message-text { padding: 12px 14px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.65; }
 
+.clarification-card { padding: 14px; border-left: 3px solid #d6a13d; background: #fffcf4; }
+.clarification-card header { display: flex; align-items: center; gap: 7px; color: #765716; }
+.clarification-card header svg { flex: 0 0 auto; }
+.clarification-card header strong { font-size: 11px; }
+.clarification-card p { margin: 9px 0 0; color: #4e4a3e; font-size: 12px; line-height: 1.65; }
+.clarification-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 13px; }
+.clarification-actions button { display: inline-flex; min-height: 32px; align-items: center; gap: 6px; border: 1px solid #c99a3e; border-radius: 6px; background: #fff7df; color: #684c12; padding: 6px 10px; font-size: 10px; }
+.clarification-actions button:hover { border-color: #ad7d22; background: #ffefbf; }
+.clarification-actions button.secondary { border-color: #cbd4d0; background: #fff; color: #4d5c55; }
+.clarification-actions button.secondary:hover { border-color: #8e9e96; background: #f3f6f4; }
+.clarification-actions button.danger { color: #9b493f; }
+
 .prompt-result > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid #e2e7e4; padding: 11px 14px; }
 .prompt-result > header > div { display: flex; align-items: center; gap: 9px; }
 .result-label { color: #78847e; font-size: 9px; font-weight: 800; }

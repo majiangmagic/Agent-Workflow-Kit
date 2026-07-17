@@ -132,6 +132,16 @@ def _normalize_participants(value: Any) -> Dict[str, Dict[str, Any]]:
             )
         result[participant_id] = {
             "id": participant_id,
+            "label": str(
+                raw_item.get("label")
+                or raw_item.get("name")
+                or (
+                    identity_values["input_name"]
+                    if participant_type != "named_character"
+                    else ""
+                )
+                or ""
+            ).strip(),
             "type": participant_type,
             "adult": bool(raw_item.get("adult", True)),
             "identity": identity_values,
@@ -289,6 +299,7 @@ def validate_patch_proposal(value: Any, current_version: int) -> Dict[str, Any]:
         "operations": normalized,
         "touched_paths": list(patch.touched_paths),
         "clarification": patch.clarification,
+        "clarification_options": list(patch.clarification_options),
         "detected_entities": [
             item.model_dump(mode="python") for item in patch.detected_entities
         ],

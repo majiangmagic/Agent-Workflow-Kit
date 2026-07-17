@@ -16,6 +16,7 @@
     "impact_set": { "type": "dict", "optional": true },
     "patch_error": { "type": "string", "optional": true }
     ,"clarification_request": { "type": "string", "optional": true }
+    ,"clarification_options": { "type": "list", "optional": true }
     ,"document_valid": { "type": "boolean", "optional": true }
   },
   "entrypoint": "apply_patch",

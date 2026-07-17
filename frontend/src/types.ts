@@ -76,6 +76,16 @@ export type Message = {
   updated_at: string;
 };
 
+export type ClarificationRequest = {
+  question: string;
+  options: string[];
+};
+
+export type WorkflowResultMetadata = {
+  status?: "valid" | "degraded" | "failed" | "needs_clarification";
+  clarification_request?: ClarificationRequest | null;
+};
+
 export type WorkflowEvent = {
   object: "workflow.event";
   type: string;

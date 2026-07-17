@@ -55,6 +55,7 @@
         "previous_resolved_prompt_ir": "scene_document_editor.previous_resolved_prompt_ir",
         "patch_proposal": "scene_document_editor.patch_proposal",
         "clarification_request": "scene_document_editor.clarification_request"
+        ,"clarification_options": "scene_document_editor.clarification_options"
       }
     },
     "identity_impact_router": {
@@ -154,6 +155,7 @@
         "resolved_prompt_ir": "prompt_compiler.resolved_prompt_ir",
         "validation_report": "consistency_validator.validation_report",
         "clarification_request": "scene_document_processor.clarification_request"
+        ,"clarification_options": "scene_document_processor.clarification_options"
       }
     }
   },

@@ -5,7 +5,7 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api/client";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { DslDesigner } from "./components/DslDesigner";
@@ -74,6 +74,7 @@ export default function App() {
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [view, setView] = useState<"runtime" | "designer">("runtime");
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const stream = useWorkflowStream();
 
   const selectedWorkflow = workflows.find((workflow) => workflow.name === workflowName);
@@ -275,8 +276,8 @@ export default function App() {
     }
   }
 
-  async function sendMessage() {
-    const message = draft.trim();
+  async function sendMessage(messageOverride?: string) {
+    const message = (messageOverride ?? draft).trim();
     if (!message || !selectedCrew || !selectedWorkflow || stream.running) return;
     setError("");
     setDraft("");
@@ -320,6 +321,11 @@ export default function App() {
       if (reason instanceof DOMException && reason.name === "AbortError") return;
       reportError(reason);
     }
+  }
+
+  function explainClarification() {
+    setDraft("补充说明，其他画面内容保持不变：");
+    window.setTimeout(() => composerRef.current?.focus(), 0);
   }
 
   if (view === "designer") {
@@ -378,7 +384,6 @@ export default function App() {
         {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError("")} type="button">关闭</button></div>}
         <Pipeline
           durations={stream.nodeDurations}
-          executionKey={stream.executionKey}
           onClear={stream.clear}
           selectedEdges={stream.selectedEdges}
           statuses={stream.nodeStatuses}
@@ -386,6 +391,9 @@ export default function App() {
         />
         <MessageList
           messages={messages}
+          onClarificationExplain={explainClarification}
+          onClarificationReply={(reply) => void sendMessage(reply)}
+          onClarificationRetry={() => void sendMessage("请重新尝试应用我上一条修改要求，其他画面内容保持不变。")}
           onDeleteLatestTurn={confirmDeleteLatestTurn}
           onRewind={confirmRewind}
           pending={stream.running}
@@ -403,6 +411,7 @@ export default function App() {
             }}
             placeholder={selectedWorkflow?.ui.input_placeholder || "输入要交给工作流处理的任务……"}
             rows={3}
+            ref={composerRef}
             value={draft}
           />
           <div className="composer-footer">

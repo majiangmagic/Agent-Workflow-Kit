@@ -24,6 +24,7 @@ class PromptTargetRendererState(TypedDict):
     resolved_prompt_ir: Optional[Dict[str, Any]]
     validation_report: Optional[Dict[str, Any]]
     clarification_request: Optional[str]
+    clarification_options: Optional[List[Any]]
     target_model: Optional[str]
     formatted_prompt: Optional[str]
     final_output: Optional[Dict[str, Any]]

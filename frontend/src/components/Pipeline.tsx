@@ -157,14 +157,12 @@ export function Pipeline({
   statuses,
   durations,
   selectedEdges,
-  executionKey,
   onClear,
 }: {
   workflow?: Workflow;
   statuses: Record<string, NodeStatus>;
   durations: Record<string, number>;
   selectedEdges: Record<string, EdgeSelection>;
-  executionKey: number;
   onClear: () => void;
 }) {
   const graph = useMemo(
@@ -186,7 +184,7 @@ export function Pipeline({
       {graph.nodes.length ? (
         <div className="runtime-graph">
           <ReactFlow
-            key={`${workflow?.name ?? "workflow"}:${executionKey}`}
+            key={workflow?.name ?? "workflow"}
             edges={graph.edges}
             elementsSelectable={false}
             fitView

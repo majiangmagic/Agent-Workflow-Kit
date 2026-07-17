@@ -36,6 +36,7 @@ def render_prompt_node(
     prompt_ir = state.get("resolved_prompt_ir") or {}
     report = state.get("validation_report") or {}
     clarification = str(state.get("clarification_request") or "").strip()
+    clarification_options = list(state.get("clarification_options") or [])
     issue_codes = list(report.get("issue_codes") or [])
     blocked = bool(report.get("blocked"))
     render_error = ""
@@ -85,6 +86,14 @@ def render_prompt_node(
         "validation_report": report,
         "danbooru_tag_records": prompt_ir.get("danbooru_tag_records") or [],
         "render_error": render_error,
+        "clarification_request": (
+            {
+                "question": clarification,
+                "options": clarification_options,
+            }
+            if clarification
+            else None
+        ),
     }
     return {
         "target_model": target_model,

@@ -13,6 +13,7 @@
     "resolved_prompt_ir": { "type": "dict", "optional": true },
     "validation_report": { "type": "dict", "optional": true },
     "clarification_request": { "type": "string", "optional": true },
+    "clarification_options": { "type": "list", "optional": true },
     "target_model": { "type": "string", "optional": true },
     "formatted_prompt": { "type": "string", "optional": true },
     "final_output": { "type": "dict", "optional": true },

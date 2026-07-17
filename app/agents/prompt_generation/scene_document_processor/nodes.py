@@ -36,6 +36,7 @@ def apply_patch_node(
     )
     error = ""
     clarification = state.get("clarification_request")
+    clarification_options = list(state.get("clarification_options") or [])
     try:
         proposal = validate_patch_proposal(
             state.get("patch_proposal") or {},
@@ -94,6 +95,7 @@ def apply_patch_node(
         "patch_error": error,
         "document_valid": not error and not clarification,
         "clarification_request": clarification,
+        "clarification_options": clarification_options,
         "messages": [
             AIMessage(
                 content=f"SceneDocument 已更新到版本 {current['version']}。",

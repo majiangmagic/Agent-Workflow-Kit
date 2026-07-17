@@ -22,6 +22,7 @@ class CharacterIdentity(DomainModel):
 
 class Participant(DomainModel):
     id: str
+    label: str = ""
     type: Literal[
         "named_character",
         "generic_person",
@@ -131,6 +132,7 @@ class ScenePatch(DomainModel):
     operations: List[PatchOperation] = Field(default_factory=list, max_length=64)
     touched_paths: List[str] = Field(default_factory=list)
     clarification: Optional[str] = None
+    clarification_options: List[str] = Field(default_factory=list, max_length=4)
     detected_entities: List[DetectedEntity] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -150,6 +152,12 @@ class ScenePatch(DomainModel):
                 "named characters require participant bindings: " + ", ".join(unbound)
             )
         return self
+
+
+class SceneCoverageAudit(DomainModel):
+    complete: bool = True
+    missing_facts: List[str] = Field(default_factory=list, max_length=16)
+    reason: str = ""
 
 
 class ImpactSet(DomainModel):

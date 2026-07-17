@@ -27,4 +27,5 @@ class SceneDocumentProcessorState(TypedDict):
     impact_set: Optional[Dict[str, Any]]
     patch_error: Optional[str]
     clarification_request: Optional[str]
+    clarification_options: Optional[List[Any]]
     document_valid: Optional[bool]

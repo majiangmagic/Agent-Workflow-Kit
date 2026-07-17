@@ -1,21 +1,44 @@
-import { Bot, History, Trash2, UserRound } from "lucide-react";
+import { Bot, CircleHelp, History, PencilLine, RotateCcw, Trash2, UserRound } from "lucide-react";
 import { useEffect, useRef } from "react";
-import type { Message } from "../types";
+import type { ClarificationRequest, Message, WorkflowResultMetadata } from "../types";
 import { PromptResult } from "./PromptResult";
+
+function clarificationFor(message: Message): ClarificationRequest | null {
+  const result = message.metadata?.workflow_result as WorkflowResultMetadata | undefined;
+  const request = result?.clarification_request;
+  if (request?.question) {
+    return {
+      question: request.question,
+      options: Array.isArray(request.options) ? request.options.filter(Boolean) : [],
+    };
+  }
+  const prefix = "需要确认：";
+  if (message.content.startsWith(prefix)) {
+    return { question: message.content.slice(prefix.length).trim(), options: [] };
+  }
+  return null;
+}
 
 export function MessageList({
   messages,
   pending,
   onRewind,
   onDeleteLatestTurn,
+  onClarificationReply,
+  onClarificationRetry,
+  onClarificationExplain,
 }: {
   messages: Message[];
   pending: boolean;
   onRewind?: (message: Message) => void;
   onDeleteLatestTurn?: () => void;
+  onClarificationReply?: (reply: string) => void;
+  onClarificationRetry?: () => void;
+  onClarificationExplain?: () => void;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const latestUserMessageId = [...messages].reverse().find((message) => message.role === "user")?.id;
+  const latestAssistantMessageId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, pending]);
@@ -36,6 +59,8 @@ export function MessageList({
     <div className="message-list">
       {messages.map((message) => {
         const user = message.role === "user";
+        const clarification = user ? null : clarificationFor(message);
+        const clarificationActive = message.id === latestAssistantMessageId && !pending;
         return (
           <article className={`message ${user ? "user" : "assistant"}`} key={message.id}>
             <div className="message-author">
@@ -43,7 +68,30 @@ export function MessageList({
               <span>{user ? "你" : "工作流结果"}</span>
             </div>
             <div className="message-surface">
-              {user ? <div className="message-text">{message.content}</div> : <PromptResult content={message.content} />}
+              {user ? (
+                <div className="message-text">{message.content}</div>
+              ) : clarification ? (
+                <div className="clarification-card">
+                  <header><CircleHelp size={16} /><strong>需要确认本轮修改</strong></header>
+                  <p>{clarification.question}</p>
+                  {clarificationActive && (
+                    <div className="clarification-actions">
+                      {clarification.options.map((option) => (
+                        <button key={option} onClick={() => onClarificationReply?.(option)} type="button">
+                          {option}
+                        </button>
+                      ))}
+                      {!clarification.options.length && (
+                        <button onClick={onClarificationRetry} type="button"><RotateCcw size={14} />重新尝试</button>
+                      )}
+                      <button className="secondary" onClick={onClarificationExplain} type="button"><PencilLine size={14} />补充说明</button>
+                      <button className="secondary danger" onClick={onDeleteLatestTurn} type="button"><Trash2 size={14} />取消本轮</button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <PromptResult content={message.content} />
+              )}
             </div>
             {user && onRewind && !message.id.startsWith("local-") && (
               <div className="message-actions" aria-label="消息操作">

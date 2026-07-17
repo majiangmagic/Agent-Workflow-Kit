@@ -134,6 +134,28 @@ def extract_workflow_memory(final_state: Dict[str, Any]) -> Dict[str, Any]:
     return memory
 
 
+def extract_workflow_result(final_state: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract structured UI-facing result metadata from the terminal node."""
+
+    for node_state in reversed(list((final_state.get("nodes") or {}).values())):
+        final_output = node_state.get("final_output")
+        if not isinstance(final_output, dict):
+            continue
+        return {
+            key: final_output.get(key)
+            for key in (
+                "status",
+                "target_model",
+                "document_version",
+                "clarification_request",
+                "warnings",
+                "unresolved_requirements",
+            )
+            if final_output.get(key) is not None
+        }
+    return {}
+
+
 def get_supervisor_state(final_state: Dict[str, Any]) -> Dict[str, Any]:
     """Read supervisor state from the current or legacy workflow shape."""
 
@@ -239,6 +261,7 @@ async def run_chat_turn(
         )
         response_content = extract_workflow_response(final_state)
         workflow_memory = extract_workflow_memory(final_state)
+        workflow_result = extract_workflow_result(final_state)
     except Exception as e:
         print(f"Error running supervisor workflow: {str(e)}")
         response_content = (
@@ -246,6 +269,7 @@ async def run_chat_turn(
             "Please try again later."
         )
         workflow_memory = {}
+        workflow_result = {}
 
     assistant_message = await ConversationService.add_message(
         db=db,
@@ -256,6 +280,7 @@ async def run_chat_turn(
         status=MessageStatus.COMPLETED,
         metadata={
             **({"workflow_memory": workflow_memory} if workflow_memory else {}),
+            **({"workflow_result": workflow_result} if workflow_result else {}),
             "agent_name": runtime_agent.get("agent_name"),
         },
     )
@@ -616,6 +641,7 @@ async def chat_stream(
         message_id = str(assistant_message.id)
         content_so_far = ""
         workflow_memory = {}
+        workflow_result = {}
         sink = WorkflowEventSink()
 
         async def run_workflow():
@@ -670,6 +696,7 @@ async def chat_stream(
 
             content_so_far = extract_workflow_response(final_state)
             workflow_memory = extract_workflow_memory(final_state)
+            workflow_result = extract_workflow_result(final_state)
 
             data = {
                 "id": message_id,
@@ -752,6 +779,7 @@ async def chat_stream(
                 "final_content": content_so_far,
                 "agent_name": runtime_agent.get("agent_name"),
                 **({"workflow_memory": workflow_memory} if workflow_memory else {}),
+                **({"workflow_result": workflow_result} if workflow_result else {}),
             }
         )
         
