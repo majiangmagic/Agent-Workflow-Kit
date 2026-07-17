@@ -269,6 +269,49 @@ def validate_patch_proposal(value: Any, current_version: int) -> Dict[str, Any]:
 
     if not isinstance(value, dict):
         raise ValueError("PatchProposal must be an object")
+    value = deepcopy(value)
+    for field in ("operations", "touched_paths", "clarification_options", "detected_entities"):
+        if value.get(field) is None:
+            value[field] = []
+    for entity in value.get("detected_entities") or []:
+        if not isinstance(entity, dict):
+            continue
+        if "source_text" not in entity and "name" in entity:
+            entity["source_text"] = entity.pop("name")
+        if "entity_type" not in entity and "type" in entity:
+            entity["entity_type"] = entity.pop("type")
+    root_document = next(
+        (
+            operation.get("value")
+            for operation in value.get("operations") or []
+            if isinstance(operation, dict)
+            and operation.get("path") in {"", "/"}
+            and operation.get("op") in {"add", "replace"}
+            and isinstance(operation.get("value"), dict)
+        ),
+        None,
+    )
+    if root_document is not None:
+        participants = _normalize_participants(root_document.get("participants"))
+        for entity in value.get("detected_entities") or []:
+            if (
+                not isinstance(entity, dict)
+                or entity.get("entity_type") != "named_character"
+                or str(entity.get("bound_id") or "").strip()
+            ):
+                continue
+            source_key = str(entity.get("source_text") or "").strip().casefold()
+            matches = [
+                participant_id
+                for participant_id, participant in participants.items()
+                if source_key
+                and source_key
+                == str(
+                    (participant.get("identity") or {}).get("input_name") or ""
+                ).strip().casefold()
+            ]
+            if len(matches) == 1:
+                entity["bound_id"] = matches[0]
     try:
         patch = ScenePatch.model_validate(value)
     except ValidationError as exc:

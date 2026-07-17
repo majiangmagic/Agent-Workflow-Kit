@@ -30,8 +30,10 @@ from app.agents.prompt_generation.scene_document_processor.nodes import apply_pa
 from app.agents.prompt_generation.scene_document_editor.nodes import (
     _append_required_facts,
     _fallback_patch,
+    _is_unhelpful_initial_clarification,
 )
 from app.agents.prompt_generation.visual_semantic_resolver.nodes import (
+    _fallback_relation_terms,
     resolve_visual_semantics_node,
 )
 from app.api.routes.conversation import extract_workflow_memory, extract_workflow_result
@@ -94,6 +96,76 @@ def test_patch_replaces_identity_without_rewriting_bound_actions_or_relations():
     assert updated["participants"]["character_1"]["identity"]["input_name"] == "Moria Luluka"
     assert updated["participants"]["character_1"]["actions"] == ["walking"]
     assert updated["relations"]["relation_1"]["object"] == "character_1"
+
+
+def test_relation_fallback_handles_english_relation_without_scope_error():
+    document = sample_document()
+
+    terms = _fallback_relation_terms(document)
+
+    assert any(
+        item["source_path"] == "/relations/relation_1"
+        and "external_hand pull character_1 rope" in item["value"]
+        for item in terms
+    )
+
+
+def test_root_patch_binds_detected_named_character_by_exact_identity_name():
+    root = empty_scene_document()
+    root["participants"] = {
+        "character_1": {
+            "id": "character_1",
+            "type": "named_character",
+            "identity": {"input_name": "伊蕾娜"},
+        }
+    }
+    proposal = validate_patch_proposal(
+        {
+            "base_version": 0,
+            "operations": [{"op": "replace", "path": "/", "value": root}],
+            "detected_entities": [
+                {
+                    "source_text": "伊蕾娜",
+                    "entity_type": "named_character",
+                    "bound_id": "",
+                }
+            ],
+        },
+        0,
+    )
+
+    assert proposal["detected_entities"][0]["bound_id"] == "character_1"
+
+
+def test_patch_normalizes_common_entity_field_aliases_and_null_lists():
+    root = empty_scene_document()
+    root["participants"] = {
+        "character_1": {
+            "id": "character_1",
+            "type": "named_character",
+            "identity": {"input_name": "伊蕾娜"},
+        }
+    }
+    proposal = validate_patch_proposal(
+        {
+            "base_version": 0,
+            "operations": [{"op": "replace", "path": "/", "value": root}],
+            "clarification_options": None,
+            "detected_entities": [
+                {"name": "伊蕾娜", "type": "named_character", "bound_id": ""}
+            ],
+        },
+        0,
+    )
+
+    assert proposal["clarification_options"] == []
+    assert proposal["detected_entities"] == [
+        {
+            "source_text": "伊蕾娜",
+            "entity_type": "named_character",
+            "bound_id": "character_1",
+        }
+    ]
 
 
 def test_patch_rejects_dangling_participant_relations():
@@ -766,6 +838,26 @@ def test_non_identity_participant_label_survives_normalization():
     )
 
     assert document["participants"]["glass"]["label"] == "transparent glass"
+
+
+def test_generic_initial_clarification_is_rejected_for_retry():
+    assert _is_unhelpful_initial_clarification(
+        empty_scene_document(),
+        {
+            "operations": [],
+            "clarification": "您的意图不明确。请说明您想对 SceneDocument 进行的修改。",
+        },
+    ) is True
+
+
+def test_specific_initial_clarification_remains_allowed():
+    assert _is_unhelpful_initial_clarification(
+        empty_scene_document(),
+        {
+            "operations": [],
+            "clarification": "画面中的“她”指左侧角色还是右侧角色？",
+        },
+    ) is False
 
 
 def test_ambiguous_fallback_returns_structured_clarification():

@@ -99,8 +99,6 @@ def _fallback_relation_terms(document: Dict[str, Any]) -> list[Dict[str, Any]]:
         ]
         phrase = " ".join(str(value) for value in parts if value).strip()
         if phrase and not contains_cjk(phrase):
-            if contains_cjk(value):
-                continue
             terms.append(
                 {
                     "value": phrase,

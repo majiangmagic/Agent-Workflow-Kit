@@ -65,6 +65,29 @@ def _is_clear_correction(user_input: str) -> bool:
     return bool(normalized) and any(marker in normalized for marker in CORRECTION_MARKERS)
 
 
+GENERIC_CLARIFICATION_MARKERS = (
+    "意图不明确",
+    "意图不清楚",
+    "请说明您想",
+    "请说明你想",
+    "请补充说明要改变的画面部分",
+    "intent is unclear",
+    "please clarify your intent",
+    "please explain what you want to modify",
+)
+
+
+def _is_unhelpful_initial_clarification(
+    document: Dict[str, Any], proposal: Dict[str, Any]
+) -> bool:
+    if int(document.get("version") or 0) != 0 or proposal.get("operations"):
+        return False
+    clarification = str(proposal.get("clarification") or "").strip().casefold()
+    if not clarification:
+        return False
+    return any(marker in clarification for marker in GENERIC_CLARIFICATION_MARKERS)
+
+
 def _parse_object(text: str) -> Dict[str, Any]:
     match = re.search(r"\{[\s\S]*\}", text.strip())
     value = json.loads(match.group(0) if match else text)
@@ -274,6 +297,11 @@ camera choices or stylistic details. Expressive enrichment belongs to a later
 resolver and must never be written into this source document. For a new document,
 replacing the root path "/" with a complete SceneDocument is allowed. Never return
 executable code or final image prompts.
+When Current SceneDocument.version is 0, a concrete non-empty scene description
+means create the initial scene by replacing path "/". It is not ambiguous merely
+because no prior document exists. Never respond with a generic request to explain
+what the user wants to modify. Clarification must name one concrete unresolved
+reference or mutually exclusive interpretation from the actual request.
 Every participant must use one type: named_character, generic_person, animal,
 role or object. Only named_character has a character identity and it must have a
 non-empty identity.input_name. Animals, generic people and roles such as a
@@ -322,6 +350,10 @@ for minors or age-ambiguous participants."""
                     raw_proposal,
                     int(document.get("version") or 0),
                 )
+                if _is_unhelpful_initial_clarification(document, proposal):
+                    raise ValueError(
+                        "A concrete initial scene received only a generic clarification"
+                    )
                 candidate = apply_patch_proposal(document, proposal)
                 if int(document.get("version") or 0) == 0 and proposal.get("operations"):
                     try:
@@ -338,6 +370,7 @@ for minors or age-ambiguous participants."""
                             int(document.get("version") or 0),
                         )
                         candidate = apply_patch_proposal(document, proposal)
+                error = ""
                 break
             except Exception as exc:
                 error = str(exc)
