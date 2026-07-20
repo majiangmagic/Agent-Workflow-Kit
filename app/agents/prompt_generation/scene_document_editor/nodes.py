@@ -47,6 +47,16 @@ CORRECTION_MARKERS = (
     "补上",
     "重新尝试",
     "上一条修改",
+    "方向错误",
+    "方向不对",
+    "方向反了",
+    "位置错误",
+    "位置不对",
+    "朝向错误",
+    "接触位置",
+    "横着",
+    "竖着",
+    "两腿中间",
     "not enough",
     "not visible",
     "cannot see",
@@ -321,6 +331,9 @@ camera choices or stylistic details. Expressive enrichment belongs to a later
 resolver and must never be written into this source document. For a new document,
 replacing the root path "/" with a complete SceneDocument is allowed. Never return
 executable code or final image prompts.
+SceneDocument.summary is display-only and must stay synchronized with structured
+facts. When an edit removes or replaces a fact mentioned in summary, update the
+summary in the same patch. Never rely on summary as the only storage for a fact.
 When Current SceneDocument.version is 0, a concrete non-empty scene description
 means create the initial scene by replacing path "/". It is not ambiguous merely
 because no prior document exists. Never respond with a generic request to explain
@@ -334,11 +347,21 @@ Every participant must also have a concise label preserving what the user called
 it, such as glass, dog, camera operator or woman. label is not an identity tag.
 Relation endpoints that reference participants use their stable IDs and set
 subject_kind or object_kind to participant; external endpoints use external.
+Every relation has a stable spatial object. Store location phrases in
+spatial.placement, object orientation in spatial.orientation, relative placement
+in spatial.relative_position, movement in spatial.motion with type/axis/direction/
+speed, and contact geometry in spatial.contact with surface/direction/pressure.
+Use spatial.pose_analogy for an explicit visual analogy. Correct these existing
+paths for direction or placement feedback; never invent alternate spatial field
+names and never hide core geometry only in details.
 When a reference is genuinely ambiguous, return no operations and place a short
 question in clarification instead of guessing.
 Active enrichments are model-added details visible in the last Prompt but absent
 from SceneDocument. When the user criticizes or removes one, put its exact id in
 rejected_enrichment_ids instead of replacing a nonexistent SceneDocument path.
+When an operation removes or replaces a structured fact, also reject every active
+enrichment whose wording depends on the old fact, even if the user does not name
+that enrichment explicitly.
 When clear, also add a durable forbidden or required SceneDocument constraint so
 future enrichment cannot reintroduce the same unwanted meaning.
 When feedback targets something visible in the generated image but absent from

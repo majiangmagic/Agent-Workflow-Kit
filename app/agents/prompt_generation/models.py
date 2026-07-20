@@ -60,6 +60,28 @@ class Composition(DomainModel):
     effects: List[str] = Field(default_factory=list)
 
 
+class MotionSpec(DomainModel):
+    type: str = ""
+    axis: str = ""
+    direction: str = ""
+    speed: str = ""
+
+
+class ContactSpec(DomainModel):
+    surface: str = ""
+    direction: str = ""
+    pressure: str = ""
+
+
+class SpatialSpec(DomainModel):
+    placement: List[str] = Field(default_factory=list)
+    orientation: str = ""
+    relative_position: str = ""
+    motion: MotionSpec = Field(default_factory=MotionSpec)
+    contact: ContactSpec = Field(default_factory=ContactSpec)
+    pose_analogy: str = ""
+
+
 class Relation(DomainModel):
     id: str
     subject: str = ""
@@ -69,6 +91,7 @@ class Relation(DomainModel):
     source: str = ""
     body_region: str = ""
     details: List[str] = Field(default_factory=list)
+    spatial: SpatialSpec = Field(default_factory=SpatialSpec)
     subject_kind: Literal["participant", "external"] = "external"
     object_kind: Literal["participant", "external"] = "external"
 
@@ -87,7 +110,7 @@ class RevisionMetadata(DomainModel):
 
 
 class SceneDocument(DomainModel):
-    schema_version: int = 2
+    schema_version: int = 3
     version: int = 0
     summary: str = ""
     participants: Dict[str, Participant] = Field(default_factory=dict)
@@ -155,14 +178,6 @@ class ScenePatch(DomainModel):
             raise ValueError(
                 "named characters require participant bindings: " + ", ".join(unbound)
             )
-        for constraint in [
-            *self.add_positive_constraints,
-            *self.add_negative_constraints,
-        ]:
-            if any("\u3400" <= char <= "\u9fff" for char in constraint):
-                raise ValueError(
-                    "constraint overlay values must use concise English prompt language"
-                )
         return self
 
 

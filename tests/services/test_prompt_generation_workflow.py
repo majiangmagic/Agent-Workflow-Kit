@@ -35,6 +35,8 @@ from app.agents.prompt_generation.scene_document_editor.nodes import (
 )
 from app.agents.prompt_generation.visual_semantic_resolver.nodes import (
     _fallback_relation_terms,
+    _merge_incremental_terms,
+    _parse_visual_decisions,
     resolve_visual_semantics_node,
 )
 from app.api.routes.conversation import extract_workflow_memory, extract_workflow_result
@@ -111,6 +113,38 @@ def test_relation_fallback_handles_english_relation_without_scope_error():
     )
 
 
+def test_relation_fallback_preserves_structured_spatial_geometry():
+    document = sample_document()
+    relation = document["relations"]["relation_1"]
+    relation["spatial"] = {
+        "placement": ["between_legs"],
+        "orientation": "vertical",
+        "relative_position": "below_body",
+        "motion": {
+            "type": "rotation",
+            "axis": "horizontal_axis",
+            "direction": "forward",
+            "speed": "fast",
+        },
+        "contact": {
+            "surface": "roller_outer_surface",
+            "direction": "upward",
+            "pressure": "firm",
+        },
+        "pose_analogy": "riding_a_wooden_horse",
+    }
+
+    phrase = next(
+        item["value"]
+        for item in _fallback_relation_terms(document)
+        if item["source_path"] == "/relations/relation_1"
+    )
+
+    assert "between_legs vertical below_body" in phrase
+    assert "rotation horizontal_axis forward fast" in phrase
+    assert "roller_outer_surface upward firm riding_a_wooden_horse" in phrase
+
+
 def test_root_patch_binds_detected_named_character_by_exact_identity_name():
     root = empty_scene_document()
     root["participants"] = {
@@ -169,16 +203,32 @@ def test_patch_normalizes_common_entity_field_aliases_and_null_lists():
     ]
 
 
-def test_patch_rejects_non_english_constraint_overlay_values():
-    with pytest.raises(ValueError, match="constraint overlay values"):
-        validate_patch_proposal(
-            {
-                "base_version": 0,
-                "operations": [],
-                "add_negative_constraints": ["不要开心表情"],
-            },
-            0,
-        )
+def test_patch_normalizes_detected_entity_kind_alias():
+    proposal = validate_patch_proposal(
+        {
+            "base_version": 0,
+            "operations": [],
+            "detected_entities": [
+                {"source_text": "roller", "kind": "object", "bound_id": "roller"}
+            ],
+        },
+        0,
+    )
+
+    assert proposal["detected_entities"][0]["entity_type"] == "object"
+
+
+def test_patch_preserves_source_language_constraint_overlay_values():
+    proposal = validate_patch_proposal(
+        {
+            "base_version": 0,
+            "operations": [],
+            "add_negative_constraints": ["不要开心表情"],
+        },
+        0,
+    )
+
+    assert proposal["add_negative_constraints"] == ["不要开心表情"]
 
 
 def test_patch_rejects_dangling_participant_relations():
@@ -223,9 +273,52 @@ def test_relation_normalization_accepts_structured_endpoints_and_action_alias():
         "source": "",
         "body_region": "",
         "details": [],
+        "spatial": {
+            "placement": [],
+            "orientation": "",
+            "relative_position": "",
+            "motion": {"type": "", "axis": "", "direction": "", "speed": ""},
+            "contact": {"surface": "", "direction": "", "pressure": ""},
+            "pose_analogy": "",
+        },
         "subject_kind": "participant",
         "object_kind": "participant",
     }
+
+
+def test_relation_normalization_promotes_spatial_aliases_to_schema_v3():
+    document = normalize_scene_document(
+        {
+            "relations": {
+                "r1": {
+                    "subject": "roller",
+                    "predicate": "rub",
+                    "object": "character",
+                    "placement": "between_legs",
+                    "orientation": "vertical",
+                    "relative_position": "below_body",
+                    "motion_type": "rotation",
+                    "motion_axis": "horizontal_axis",
+                    "motion_direction": "forward",
+                    "contact_surface": "roller_outer_surface",
+                    "contact_direction": "upward",
+                    "pose_analogy": "riding_a_wooden_horse",
+                }
+            }
+        }
+    )
+
+    relation = document["relations"]["r1"]
+    assert document["schema_version"] == 3
+    assert relation["spatial"]["placement"] == ["between_legs"]
+    assert relation["spatial"]["orientation"] == "vertical"
+    assert relation["spatial"]["motion"] == {
+        "type": "rotation",
+        "axis": "horizontal_axis",
+        "direction": "forward",
+        "speed": "",
+    }
+    assert relation["spatial"]["contact"]["direction"] == "upward"
 
 
 def test_identity_only_change_does_not_invalidate_visual_resolution():
@@ -373,6 +466,35 @@ def test_validator_reports_missing_paths_and_polarity_conflicts():
     )
 
 
+def test_validator_requires_every_active_constraint_to_be_compiled():
+    document = normalize_scene_document({}, version=2)
+    constraint_path = "/constraint_overlay/con_no_closeup"
+    result = validate_prompt_node(
+        {
+            "scene_document": document,
+            "impact_set": {"removed_identity_terms": []},
+            "resolved_prompt_ir": {
+                "positive_terms": [],
+                "compiled_negative_terms": [],
+                "covered_paths": [],
+                "constraint_overlay": {
+                    "entries": {
+                        "con_no_closeup": {
+                            "id": "con_no_closeup",
+                            "value": "避免特写",
+                            "polarity": "negative",
+                            "status": "active",
+                        }
+                    }
+                },
+            },
+        }
+    )
+
+    assert result["needs_repair"] is True
+    assert constraint_path in result["validation_report"]["missing_paths"]
+
+
 def test_renderer_keeps_phrases_for_nai_v4_but_not_nai_v3():
     state = {
         "scene_document": sample_document(),
@@ -392,6 +514,105 @@ def test_renderer_keeps_phrases_for_nai_v4_but_not_nai_v3():
     assert "a hand pulling her by a rope" in v4["final_output"]["positive_prompt"]
     assert "a hand pulling her by a rope" not in v3["final_output"]["positive_prompt"]
     assert "hatsune_miku" in v3["final_output"]["positive_prompt"]
+
+
+def test_compiler_compacts_relation_phrases_but_keeps_verified_tags():
+    result = compile_prompt_node(
+        {
+            "scene_document": sample_document(version=2),
+            "identity_terms": [],
+            "atomic_terms": [
+                {
+                    "value": "between_legs",
+                    "kind": "verified_tag",
+                    "source_path": "/relations/relation_1/spatial",
+                },
+                {
+                    "value": "The roller is placed between her legs.",
+                    "kind": "descriptive_phrase",
+                    "source_path": "/relations/relation_1/spatial",
+                },
+                {
+                    "value": "The roller is oriented vertically.",
+                    "kind": "descriptive_phrase",
+                    "source_path": "/relations/relation_1/spatial",
+                },
+                {
+                    "value": "wooden_horse",
+                    "kind": "verified_tag",
+                    "source_path": "/relations/relation_1/spatial",
+                },
+            ],
+            "relation_terms": [
+                {
+                    "value": "A roller rubs against the character.",
+                    "kind": "relation_phrase",
+                    "source_path": "/relations/relation_1",
+                },
+                {
+                    "value": (
+                        "A bumpy roller is positioned vertically between her legs, "
+                        "rubbing her as she rides it like a wooden horse."
+                    ),
+                    "kind": "relation_phrase",
+                    "source_path": "/relations/relation_1/spatial",
+                },
+                {
+                    "value": (
+                        "The roller is positioned vertically between the legs, "
+                        "rubbing her like riding a wooden horse."
+                    ),
+                    "kind": "user_constraint",
+                    "source_path": "/constraint_overlay/c1",
+                },
+            ],
+            "negative_terms": [],
+            "impact_set": {"removed_identity_terms": []},
+        }
+    )
+    values = [item["value"] for item in result["resolved_prompt_ir"]["positive_terms"]]
+
+    assert "between_legs" in values
+    assert "wooden_horse" in values
+    assert "A roller rubs against the character." not in values
+    assert "The roller is placed between her legs." not in values
+    assert "The roller is oriented vertically." not in values
+    assert sum("wooden horse" in value.casefold() for value in values) == 1
+
+
+def test_visual_decision_parser_accepts_phrase_in_boolean_field():
+    decisions = _parse_visual_decisions(
+        json.dumps(
+            {
+                "decisions": [
+                    {
+                        "fact_index": 0,
+                        "action": "phrase_only",
+                        "preserve_phrase": "wide shot with the full setup visible",
+                    }
+                ]
+            }
+        )
+    )
+
+    assert decisions[0]["preserve_phrase"] is True
+    assert decisions[0]["preserved_phrase"] == "wide shot with the full setup visible"
+
+
+def test_incremental_merge_drops_non_authoritative_summary_terms():
+    merged = _merge_incremental_terms(
+        [
+            {
+                "value": "The character is sticking out her tongue.",
+                "source_path": "/summary",
+            },
+            {"value": "daytime street", "source_path": "/environment/location"},
+        ],
+        [{"value": "crawling", "source_path": "/participants/p1/actions/0"}],
+        ["/participants/p1/actions/0"],
+    )
+
+    assert [item["value"] for item in merged] == ["daytime street", "crawling"]
 
 
 def test_fuzzy_tag_correction_accepts_typo_but_rejects_ambiguous_candidates():
@@ -993,6 +1214,7 @@ def test_clear_result_complaint_falls_back_to_safe_emphasis_patch():
         "生成结果没有看到玻璃上的挤压行为，补充这一段",
         "这个核心动作漏了，请补上",
         "请重新尝试应用我上一条修改要求，其他画面内容保持不变",
+        "方向错误了，滚轮应该竖着放在两腿中间",
     ],
 )
 def test_natural_missing_feedback_is_an_executable_correction(message):
@@ -1090,6 +1312,36 @@ def test_renderer_and_api_expose_structured_clarification_metadata():
     assert result["clarification_request"] == {
         "question": "你指的是哪名角色？",
         "options": ["左侧角色", "右侧角色"],
+    }
+
+
+def test_workflow_result_persists_patch_diagnostics():
+    rendered = render_prompt_node(
+        {
+            "scene_document": sample_document(version=2),
+            "resolved_prompt_ir": {},
+            "validation_report": {},
+            "clarification_request": "请确认方向",
+            "workflow_inputs": {"target_model": "nai_v4"},
+        }
+    )
+    result = extract_workflow_result(
+        {
+            "nodes": {
+                "scene_document_editor": {
+                    "editor_error": "invalid spatial path",
+                    "patch_proposal": {"intent": "correct_direction"},
+                },
+                "scene_document_processor": {"patch_error": "replace path missing"},
+                "target_renderer": rendered,
+            }
+        }
+    )
+
+    assert result["workflow_diagnostics"] == {
+        "editor_error": "invalid spatial path",
+        "patch_error": "replace path missing",
+        "patch_intent": "correct_direction",
     }
 
 

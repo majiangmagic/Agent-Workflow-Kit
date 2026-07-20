@@ -21,6 +21,10 @@ def _key(value: Any) -> str:
     return " ".join(str(value or "").strip().casefold().replace("_", " ").split())
 
 
+def _contains_cjk(value: Any) -> bool:
+    return bool(re.search(r"[\u3400-\u9fff]", str(value or "")))
+
+
 def _entries(values: Any) -> list[Dict[str, Any]]:
     result = []
     seen = set()
@@ -34,6 +38,122 @@ def _entries(values: Any) -> list[Dict[str, Any]]:
         result.append({**item, "value": value})
         seen.add(key)
     return result
+
+
+def _source_paths(item: Dict[str, Any]) -> set[str]:
+    return set(re.findall(r"/[^,\s]+", str(item.get("source_path") or "")))
+
+
+def _paths_overlap(left: set[str], right: set[str]) -> bool:
+    return any(
+        first == second
+        or first.startswith(second.rstrip("/") + "/")
+        or second.startswith(first.rstrip("/") + "/")
+        for first in left
+        for second in right
+    )
+
+
+def _relation_roots(paths: set[str]) -> set[str]:
+    return {
+        match.group(1)
+        for path in paths
+        if (match := re.match(r"(/relations/[^/]+)", path))
+    }
+
+
+def _phrase_tokens(value: Any) -> set[str]:
+    tokens = re.findall(r"[a-z0-9]+", _key(value))
+    stopwords = {
+        "a", "an", "and", "as", "at", "by", "from", "had", "has", "have",
+        "he", "her", "his", "in", "is", "it", "of", "on", "or", "she",
+        "the", "they", "to", "with",
+    }
+
+    def stem(token: str) -> str:
+        if len(token) > 5 and token.endswith("ing"):
+            base = token[:-3]
+            return base[:-1] if len(base) > 2 and base[-1] == base[-2] else base
+        if len(token) > 4 and token.endswith("ed"):
+            return token[:-2]
+        if len(token) > 4 and token.endswith("es"):
+            return token[:-2]
+        if len(token) > 3 and token.endswith("s"):
+            return token[:-1]
+        return token
+
+    return {stem(token) for token in tokens if token not in stopwords}
+
+
+def _is_verified_term(item: Dict[str, Any]) -> bool:
+    return str(item.get("kind") or "").startswith("verified")
+
+
+def _compact_positive_terms(values: Any) -> list[Dict[str, Any]]:
+    """Prefer one complete relation phrase while retaining atomic verified tags."""
+
+    entries = _entries(values)
+    relation_indexes: dict[str, int] = {}
+    for index, item in enumerate(entries):
+        if item.get("kind") != "relation_phrase":
+            continue
+        for path in _source_paths(item):
+            match = re.match(r"(/relations/[^/]+)", path)
+            if not match:
+                continue
+            relation_path = match.group(1)
+            previous_index = relation_indexes.get(relation_path)
+            if previous_index is None or len(_phrase_tokens(item["value"])) > len(
+                _phrase_tokens(entries[previous_index]["value"])
+            ):
+                relation_indexes[relation_path] = index
+
+    canonical_indexes = set(relation_indexes.values())
+    canonical_relations = [entries[index] for index in canonical_indexes]
+    compacted = []
+    for index, item in enumerate(entries):
+        if _is_verified_term(item):
+            compacted.append(item)
+            continue
+        if item.get("kind") == "relation_phrase" and index not in canonical_indexes:
+            item_relations = {
+                match.group(1)
+                for path in _source_paths(item)
+                if (match := re.match(r"(/relations/[^/]+)", path))
+            }
+            if item_relations & set(relation_indexes):
+                continue
+
+        tokens = _phrase_tokens(item.get("value"))
+        paths = _source_paths(item)
+        covered = False
+        for relation in canonical_relations:
+            if relation is item:
+                continue
+            relation_tokens = _phrase_tokens(relation.get("value"))
+            relation_paths = _source_paths(relation)
+            shares_source = _paths_overlap(paths, relation_paths)
+            same_relation = bool(
+                _relation_roots(paths) & _relation_roots(relation_paths)
+            )
+            auxiliary_source = any(
+                path.startswith(("/requirements/", "/constraint_overlay/"))
+                for path in paths
+            )
+            if not tokens or not relation_tokens or not (shares_source or auxiliary_source):
+                continue
+            coverage = len(tokens & relation_tokens) / len(tokens)
+            shared_tokens = len(tokens & relation_tokens)
+            if shared_tokens >= 2 and (
+                coverage >= 0.6
+                or same_relation
+                or (auxiliary_source and len(tokens) <= 4 and coverage >= 0.5)
+            ):
+                covered = True
+                break
+        if not covered:
+            compacted.append(item)
+    return _entries(compacted)
 
 
 def _overlay_entry(item: Any, polarity: str) -> Dict[str, Any]:
@@ -166,6 +286,7 @@ def compile_prompt_node(
                 }
                 for entry in active_constraints
                 if entry.get("polarity") == "positive"
+                and not _contains_cjk(entry.get("value"))
             ],
         ]
     )
@@ -183,6 +304,7 @@ def compile_prompt_node(
                 }
                 for entry in active_constraints
                 if entry.get("polarity") == "negative"
+                and not _contains_cjk(entry.get("value"))
             ],
         ]
     )
@@ -241,6 +363,7 @@ def compile_prompt_node(
             if item.get("source_path")
         )
     )
+    positive = _compact_positive_terms(positive)
     resolved_ir = {
         "document_version": document_version,
         "identity_terms": identity_terms,

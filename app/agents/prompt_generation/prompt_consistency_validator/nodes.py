@@ -40,7 +40,17 @@ def validate_prompt_node(
     }
     conflicts = sorted(key for key in positive_keys & negative_keys if key)
     covered = set(prompt_ir.get("covered_paths") or [])
-    required_paths = collect_required_paths(document)
+    constraint_entries = (
+        (prompt_ir.get("constraint_overlay") or {}).get("entries") or {}
+    )
+    constraint_paths = [
+        f"/constraint_overlay/{constraint_id}"
+        for constraint_id, entry in constraint_entries.items()
+        if isinstance(entry, dict)
+        and entry.get("status") == "active"
+        and str(entry.get("value") or "").strip()
+    ]
+    required_paths = [*collect_required_paths(document), *constraint_paths]
     missing_paths = [path for path in required_paths if path not in covered]
     removed = [
         _term_key(value)

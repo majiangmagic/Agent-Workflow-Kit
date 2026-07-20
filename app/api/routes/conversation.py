@@ -139,11 +139,28 @@ def extract_workflow_memory(final_state: Dict[str, Any]) -> Dict[str, Any]:
 def extract_workflow_result(final_state: Dict[str, Any]) -> Dict[str, Any]:
     """Extract structured UI-facing result metadata from the terminal node."""
 
-    for node_state in reversed(list((final_state.get("nodes") or {}).values())):
+    nodes = final_state.get("nodes") or {}
+    diagnostics = {
+        key: value
+        for key, value in {
+            "editor_error": (nodes.get("scene_document_editor") or {}).get(
+                "editor_error"
+            ),
+            "patch_error": (nodes.get("scene_document_processor") or {}).get(
+                "patch_error"
+            ),
+            "patch_intent": (
+                (nodes.get("scene_document_editor") or {}).get("patch_proposal")
+                or {}
+            ).get("intent"),
+        }.items()
+        if value
+    }
+    for node_state in reversed(list(nodes.values())):
         final_output = node_state.get("final_output")
         if not isinstance(final_output, dict):
             continue
-        return {
+        result = {
             key: final_output.get(key)
             for key in (
                 "status",
@@ -155,6 +172,9 @@ def extract_workflow_result(final_state: Dict[str, Any]) -> Dict[str, Any]:
             )
             if final_output.get(key) is not None
         }
+        if diagnostics:
+            result["workflow_diagnostics"] = diagnostics
+        return result
     return {}
 
 

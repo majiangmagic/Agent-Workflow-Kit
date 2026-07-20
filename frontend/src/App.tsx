@@ -328,6 +328,15 @@ export default function App() {
     window.setTimeout(() => composerRef.current?.focus(), 0);
   }
 
+  function retryClarification() {
+    const latestUserMessage = [...messages]
+      .reverse()
+      .find((message) => message.role === "user")
+      ?.content
+      ?.trim();
+    if (latestUserMessage) void sendMessage(latestUserMessage);
+  }
+
   if (view === "designer") {
     return <DslDesigner onClose={() => setView("runtime")} onGenerated={reloadDefinitions} />;
   }
@@ -393,7 +402,7 @@ export default function App() {
           messages={messages}
           onClarificationExplain={explainClarification}
           onClarificationReply={(reply) => void sendMessage(reply)}
-          onClarificationRetry={() => void sendMessage("请重新尝试应用我上一条修改要求，其他画面内容保持不变。")}
+          onClarificationRetry={retryClarification}
           onDeleteLatestTurn={confirmDeleteLatestTurn}
           onRewind={confirmRewind}
           pending={stream.running}

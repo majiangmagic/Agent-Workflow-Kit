@@ -56,7 +56,7 @@ def empty_scene_document() -> Dict[str, Any]:
     """Create the model-independent source document for a new conversation."""
 
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "version": 0,
         "summary": "",
         "participants": {},
@@ -180,6 +180,58 @@ def _normalize_relations(
             return endpoint_id, endpoint_kind
         return str(raw or "").strip(), ""
 
+    def spatial_spec(raw_item: Mapping[str, Any]) -> Dict[str, Any]:
+        raw_spatial = raw_item.get("spatial")
+        spatial = raw_spatial if isinstance(raw_spatial, dict) else {}
+        raw_motion = spatial.get("motion")
+        motion = raw_motion if isinstance(raw_motion, dict) else {}
+        raw_contact = spatial.get("contact")
+        contact = raw_contact if isinstance(raw_contact, dict) else {}
+        placement = spatial.get("placement", raw_item.get("placement"))
+        return {
+            "placement": text_list(placement),
+            "orientation": str(
+                spatial.get("orientation") or raw_item.get("orientation") or ""
+            ).strip(),
+            "relative_position": str(
+                spatial.get("relative_position")
+                or raw_item.get("relative_position")
+                or ""
+            ).strip(),
+            "motion": {
+                "type": str(
+                    motion.get("type") or raw_item.get("motion_type") or ""
+                ).strip(),
+                "axis": str(
+                    motion.get("axis") or raw_item.get("motion_axis") or ""
+                ).strip(),
+                "direction": str(
+                    motion.get("direction")
+                    or raw_item.get("motion_direction")
+                    or ""
+                ).strip(),
+                "speed": str(
+                    motion.get("speed") or raw_item.get("motion_speed") or ""
+                ).strip(),
+            },
+            "contact": {
+                "surface": str(
+                    contact.get("surface") or raw_item.get("contact_surface") or ""
+                ).strip(),
+                "direction": str(
+                    contact.get("direction")
+                    or raw_item.get("contact_direction")
+                    or ""
+                ).strip(),
+                "pressure": str(
+                    contact.get("pressure") or raw_item.get("contact_pressure") or ""
+                ).strip(),
+            },
+            "pose_analogy": str(
+                spatial.get("pose_analogy") or raw_item.get("pose_analogy") or ""
+            ).strip(),
+        }
+
     for index, (raw_id, raw_item) in enumerate(value.items(), start=1):
         if not isinstance(raw_item, dict):
             continue
@@ -201,6 +253,7 @@ def _normalize_relations(
             "source": str(raw_item.get("source") or "").strip(),
             "body_region": str(raw_item.get("body_region") or "").strip(),
             "details": text_list(raw_item.get("details")),
+            "spatial": spatial_spec(raw_item),
             "subject_kind": str(
                 raw_item.get("subject_kind")
                 or nested_subject_kind
@@ -308,8 +361,11 @@ def validate_patch_proposal(value: Any, current_version: int) -> Dict[str, Any]:
             continue
         if "source_text" not in entity and "name" in entity:
             entity["source_text"] = entity.pop("name")
-        if "entity_type" not in entity and "type" in entity:
-            entity["entity_type"] = entity.pop("type")
+        if "entity_type" not in entity:
+            if "type" in entity:
+                entity["entity_type"] = entity.pop("type")
+            elif "kind" in entity:
+                entity["entity_type"] = entity.pop("kind")
     root_document = next(
         (
             operation.get("value")

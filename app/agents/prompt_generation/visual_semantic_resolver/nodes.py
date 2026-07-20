@@ -35,9 +35,17 @@ def _parse_visual_decisions(text: str) -> list[Dict[str, Any]]:
     from app.agents.prompt_generation.models import VisualTagAdjudication
 
     match = re.search(r"\{[\s\S]*\}", text.strip())
-    parsed = VisualTagAdjudication.model_validate_json(
-        match.group(0) if match else text
-    )
+    payload = json.loads(match.group(0) if match else text)
+    for decision in payload.get("decisions") or []:
+        if not isinstance(decision, dict):
+            continue
+        preserve_phrase = decision.get("preserve_phrase")
+        if isinstance(preserve_phrase, str):
+            phrase = preserve_phrase.strip()
+            if phrase and not decision.get("preserved_phrase"):
+                decision["preserved_phrase"] = phrase
+            decision["preserve_phrase"] = bool(phrase)
+    parsed = VisualTagAdjudication.model_validate(payload)
     return [item.model_dump(mode="python") for item in parsed.decisions]
 
 
@@ -47,6 +55,14 @@ def _normalized(value: Any) -> str:
 
 def _facts(value: Any) -> list[Dict[str, Any]]:
     return [item for item in value or [] if isinstance(item, dict)]
+
+
+def _authoritative_facts(value: Any) -> list[Dict[str, Any]]:
+    return [
+        item
+        for item in _facts(value)
+        if str(item.get("source_path") or "").strip() != "/summary"
+    ]
 
 
 def _path_is_affected(source_path: str, touched_paths: list[str]) -> bool:
@@ -71,6 +87,7 @@ def _merge_incremental_terms(
     preserved = [
         item
         for item in _facts(previous)
+        if str(item.get("source_path") or "").strip() != "/summary"
         if not _path_is_affected(str(item.get("source_path") or ""), touched_paths)
     ]
     changed = [
@@ -88,6 +105,9 @@ def _fallback_relation_terms(document: Dict[str, Any]) -> list[Dict[str, Any]]:
 
     terms = []
     for relation_id, relation in (document.get("relations") or {}).items():
+        spatial = relation.get("spatial") or {}
+        motion = spatial.get("motion") or {}
+        contact = spatial.get("contact") or {}
         parts = [
             relation.get("subject"),
             relation.get("predicate"),
@@ -96,6 +116,17 @@ def _fallback_relation_terms(document: Dict[str, Any]) -> list[Dict[str, Any]]:
             relation.get("source"),
             relation.get("body_region"),
             *(relation.get("details") or []),
+            *(spatial.get("placement") or []),
+            spatial.get("orientation"),
+            spatial.get("relative_position"),
+            motion.get("type"),
+            motion.get("axis"),
+            motion.get("direction"),
+            motion.get("speed"),
+            contact.get("surface"),
+            contact.get("direction"),
+            contact.get("pressure"),
+            spatial.get("pose_analogy"),
         ]
         phrase = " ".join(str(value) for value in parts if value).strip()
         if phrase and not contains_cjk(phrase):
@@ -140,13 +171,14 @@ async def resolve_visual_semantics_node(
     from app.services.ai_provider import AIProvider, ai_provider
 
     document = state.get("scene_document") or {}
+    semantic_document = {**document, "summary": ""}
     previous_ir = state.get("previous_resolved_prompt_ir") or {}
     impact = state.get("impact_set") or {}
     if not impact.get("visual_changed") and previous_ir.get("atomic_terms") is not None:
         return {
-            "atomic_terms": list(previous_ir.get("atomic_terms") or []),
-            "relation_terms": list(previous_ir.get("relation_terms") or []),
-            "negative_terms": list(previous_ir.get("negative_terms") or []),
+            "atomic_terms": _authoritative_facts(previous_ir.get("atomic_terms")),
+            "relation_terms": _authoritative_facts(previous_ir.get("relation_terms")),
+            "negative_terms": _authoritative_facts(previous_ir.get("negative_terms")),
             "visual_tag_records": list(previous_ir.get("visual_tag_records") or []),
             "visual_tag_resolutions": list(previous_ir.get("visual_tag_resolutions") or []),
             "visual_tag_adjudication": dict(previous_ir.get("visual_tag_adjudication") or {}),
@@ -176,7 +208,8 @@ entire fact, including camera or spatial meaning not covered by those tags.
 relation_facts contain phrase.
 negative_facts contain phrase. Do not emit character identity tags; identity is
 resolved by another component. Preserve subjects, objects, body regions, sources,
-connections and spatial direction in relation phrases. A complaint about the last
+connections, placement, orientation, motion axis/direction, contact geometry and
+pose analogy in relation phrases. A complaint about the last
 render is a correction, not positive depicted content.
 
 Strategy is {strategy}. In faithful mode emit only explicit document facts. In
@@ -184,8 +217,14 @@ expressive mode you may add at most 8 useful visual refinements, mark them
 inferred=true, and never add identities, participants, core actions or relations.
 Active constraint_overlay entries are user-authored requirements and prohibitions.
 Never infer content that conflicts with an active negative constraint, and treat
-active positive constraints as explicit facts that must be represented.
-Use concise English phrases suitable for image prompting."""
+active positive constraints as explicit facts that must be represented. Emit one
+fact for every active constraint using source_path /constraint_overlay/<entry id>
+and the matching polarity. Translate non-English constraint values losslessly to
+concise English in the emitted fact; the overlay itself remains source-language.
+SceneDocument.summary is display-only and non-authoritative. Never emit a fact
+with source_path /summary; use only structured participant, environment,
+composition, relation and requirement fields. Use concise English phrases
+suitable for image prompting."""
     if incremental:
         system_prompt += (
             "\nResolve only facts whose source_path is inside one of these changed "
@@ -206,7 +245,7 @@ Use concise English phrases suitable for image prompting."""
                 HumanMessage(
                     content=json.dumps(
                         {
-                            "scene_document": document,
+                            "scene_document": semantic_document,
                             "constraint_overlay": (
                                 previous_ir.get("constraint_overlay") or {}
                             ),
@@ -263,7 +302,7 @@ Every fallback_phrase and phrase must contain no CJK characters."""
         if not contains_cjk(fact.get("phrase"))
     ]
 
-    atomic_facts = _facts(parsed.get("atomic_facts"))
+    atomic_facts = _authoritative_facts(parsed.get("atomic_facts"))
     candidates = unique_text(
         [
             candidate
@@ -462,7 +501,7 @@ valid yourself. Preserve all source semantics. Return only {{"decisions": [...]}
             "provenance": "model",
             "inferred": bool(fact.get("inferred")),
         }
-        for fact in _facts(parsed.get("relation_facts"))
+        for fact in _authoritative_facts(parsed.get("relation_facts"))
         if str(fact.get("phrase") or "").strip()
     ]
     if not relation_terms:
@@ -476,7 +515,7 @@ valid yourself. Preserve all source semantics. Return only {{"decisions": [...]}
             "provenance": "model",
             "inferred": False,
         }
-        for fact in _facts(parsed.get("negative_facts"))
+        for fact in _authoritative_facts(parsed.get("negative_facts"))
         if str(fact.get("phrase") or "").strip()
     ]
     if not negative_terms:

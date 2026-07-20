@@ -76,7 +76,10 @@ Return one RepairOverlay JSON object with document_version, depends_on_paths,
 add_positive, add_negative, remove_positive and remove_negative. Added items must
 contain value, source_path and kind. Use concise English image-prompt phrases with
 no CJK characters. Cover only allowed_paths. Preserve exact subjects, objects,
-spatial relations and identities from SceneDocument. Do not add new facts."""
+spatial relations and identities from SceneDocument. Active constraint_overlay
+entries are also authoritative: translate a missing positive constraint into
+add_positive and a missing negative constraint into add_negative using its exact
+/constraint_overlay/<id> source_path. Do not add new facts."""
         payload = {
             "scene_document": state.get("scene_document") or {},
             "resolved_prompt_ir": prompt_ir,
