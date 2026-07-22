@@ -31,6 +31,7 @@ RUNTIME_STATE_FIELDS = {
     "status",
     "results",
     "error",
+    "prepared_context",
 }
 
 

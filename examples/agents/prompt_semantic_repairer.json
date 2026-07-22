@@ -14,11 +14,20 @@
     "resolved_prompt_ir": { "type": "dict", "optional": true },
     "validation_report": { "type": "dict", "optional": true },
     "repair_overlay": { "type": "dict", "optional": true },
-    "repair_attempts": { "type": "integer", "optional": true }
+    "repair_attempts": { "type": "integer", "optional": true },
+    "prepared_context": { "type": "dict", "optional": true }
   },
-  "entrypoint": "repair_semantics",
+  "entrypoint": "prepare_context",
   "nodes": {
-    "repair_semantics": { "handler": "repair_semantics_node" }
+    "prepare_context": { "handler": "prepare_context_node" },
+    "collect_repair_scope": { "handler": "collect_repair_scope_node" },
+    "repair_semantics": { "handler": "repair_semantics_node" },
+    "validate_repair": { "handler": "validate_repair_node" }
   },
-  "edges": [{ "from": "repair_semantics", "to": "END" }]
+  "edges": [
+    { "from": "prepare_context", "to": "collect_repair_scope" },
+    { "from": "collect_repair_scope", "to": "repair_semantics" },
+    { "from": "repair_semantics", "to": "validate_repair" },
+    { "from": "validate_repair", "to": "END" }
+  ]
 }

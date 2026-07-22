@@ -12,6 +12,64 @@ from app.agents.prompt_generation.visual_semantic_resolver.state import VisualSe
 # - 节点名是 DSL 的稳定标识；节点名不变，刷新时保留对应代码块。
 # - 新 DSL 删除某个节点名时，对应代码块会被删除，不会因为里面有人写过代码而保留。
 
+# <agent-node name="prepare_context">
+# 中文注意：
+# 1. 节点名 "prepare_context" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def prepare_context_node(
+    state: VisualSemanticResolverState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Isolate visual semantic inputs from workflow state."""
+
+    # prompt/model/temperature 来自本地 Agent manifest 和 Workflow 节点配置，
+    # 由运行时经 Workflow state 注入。
+    # 这里可以读取 state["system_prompt"], state["model"], state["temperature"]。
+    return {
+        "prepared_context": {
+            "scene_document": dict(state.get("scene_document") or {}),
+            "previous_resolved_prompt_ir": dict(
+                state.get("previous_resolved_prompt_ir") or {}
+            ),
+            "impact_set": dict(state.get("impact_set") or {}),
+            "workflow_inputs": dict(state.get("workflow_inputs") or {}),
+        }
+    }
+# </agent-node>
+
+
+# <agent-node name="prepare_semantics">
+# 中文注意：
+# 1. 节点名 "prepare_semantics" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def prepare_semantics_node(
+    state: VisualSemanticResolverState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Prepare the semantic document and the paths affected by this edit."""
+
+    context = dict(state.get("prepared_context") or {})
+    document = dict(context.get("scene_document") or {})
+    impact = context.get("impact_set") or {}
+    workflow_inputs = context.get("workflow_inputs") or {}
+    context.update(
+        {
+            "semantic_document": {**document, "summary": ""},
+            "prompt_strategy": str(workflow_inputs.get("prompt_strategy") or "expressive"),
+            "touched_paths": [
+                str(path)
+                for path in impact.get("touched_paths") or []
+                if not str(path).endswith("/identity")
+                and "/identity/" not in str(path)
+            ],
+        }
+    )
+    return {"prepared_context": context}
+# </agent-node>
+
+
 # <agent-node name="resolve_visual_semantics">
 import json
 import re
@@ -170,8 +228,9 @@ async def resolve_visual_semantics_node(
     )
     from app.services.ai_provider import AIProvider, ai_provider
 
+    state = {**state, **dict(state.get("prepared_context") or {})}
     document = state.get("scene_document") or {}
-    semantic_document = {**document, "summary": ""}
+    semantic_document = state.get("semantic_document") or {**document, "summary": ""}
     previous_ir = state.get("previous_resolved_prompt_ir") or {}
     impact = state.get("impact_set") or {}
     if not impact.get("visual_changed") and previous_ir.get("atomic_terms") is not None:
@@ -189,13 +248,13 @@ async def resolve_visual_semantics_node(
         }
 
     workflow_inputs = state.get("workflow_inputs") or {}
-    strategy = str(workflow_inputs.get("prompt_strategy") or "expressive")
-    touched_paths = [
+    strategy = str(state.get("prompt_strategy") or workflow_inputs.get("prompt_strategy") or "expressive")
+    touched_paths = list(state.get("touched_paths") or [
         str(path)
         for path in impact.get("touched_paths") or []
         if not str(path).endswith("/identity")
         and "/identity/" not in str(path)
-    ]
+    ])
     incremental = bool(previous_ir) and bool(touched_paths) and "/" not in touched_paths
     system_prompt = f"""{ADULT_CONTENT_PROCESSING_PROMPT}
 
@@ -561,5 +620,35 @@ valid yourself. Preserve all source semantics. Return only {{"decisions": [...]}
                 name="visual_semantic_resolver",
             )
         ],
+    }
+# </agent-node>
+
+
+# <agent-node name="validate_visual_result">
+# 中文注意：
+# 1. 节点名 "validate_visual_result" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def validate_visual_result_node(
+    state: VisualSemanticResolverState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Validate the visual resolver's public output contract."""
+
+    list_fields = (
+        "atomic_terms",
+        "relation_terms",
+        "negative_terms",
+        "visual_tag_records",
+        "visual_tag_resolutions",
+    )
+    for field in list_fields:
+        if not isinstance(state.get(field), list):
+            raise ValueError(f"visual resolver did not produce {field}")
+    if not isinstance(state.get("visual_tag_adjudication"), dict):
+        raise ValueError("visual resolver did not produce visual_tag_adjudication")
+    return {
+        **{field: list(state.get(field) or []) for field in list_fields},
+        "visual_tag_adjudication": dict(state.get("visual_tag_adjudication") or {}),
     }
 # </agent-node>

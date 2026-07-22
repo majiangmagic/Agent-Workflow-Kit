@@ -12,6 +12,59 @@ from app.agents.prompt_generation.prompt_semantic_repairer.state import PromptSe
 # - 节点名是 DSL 的稳定标识；节点名不变，刷新时保留对应代码块。
 # - 新 DSL 删除某个节点名时，对应代码块会被删除，不会因为里面有人写过代码而保留。
 
+# <agent-node name="prepare_context">
+# 中文注意：
+# 1. 节点名 "prepare_context" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def prepare_context_node(
+    state: PromptSemanticRepairerState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Isolate the validator report and Prompt IR for bounded repair."""
+
+    # prompt/model/temperature 来自本地 Agent manifest 和 Workflow 节点配置，
+    # 由运行时经 Workflow state 注入。
+    # 这里可以读取 state["system_prompt"], state["model"], state["temperature"]。
+    return {
+        "prepared_context": {
+            "scene_document": dict(state.get("scene_document") or {}),
+            "resolved_prompt_ir": dict(state.get("resolved_prompt_ir") or {}),
+            "validation_report": dict(state.get("validation_report") or {}),
+            "repair_attempts": int(state.get("repair_attempts") or 0),
+        }
+    }
+# </agent-node>
+
+
+# <agent-node name="collect_repair_scope">
+# 中文注意：
+# 1. 节点名 "collect_repair_scope" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def collect_repair_scope_node(
+    state: PromptSemanticRepairerState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Limit semantic repair to paths reported by the validator."""
+
+    context = dict(state.get("prepared_context") or {})
+    report = context.get("validation_report") or {}
+    issue_paths = {
+        str(path)
+        for issue in report.get("issues") or []
+        if isinstance(issue, dict)
+        for path in issue.get("affected_paths") or []
+        if path
+    }
+    context["repair_scope"] = {
+        "allowed_paths": sorted(set(report.get("missing_paths") or []) | issue_paths),
+        "non_english": list(report.get("non_target_language_terms") or []),
+    }
+    return {"prepared_context": context}
+# </agent-node>
+
+
 # <agent-node name="repair_semantics">
 import json
 import re
@@ -36,17 +89,12 @@ async def repair_semantics_node(
     from app.agents.prompt_generation.danbooru import ADULT_CONTENT_PROCESSING_PROMPT
     from app.services.ai_provider import AIProvider, ai_provider
 
+    state = {**state, **dict(state.get("prepared_context") or {})}
     report = state.get("validation_report") or {}
     prompt_ir = state.get("resolved_prompt_ir") or {}
-    issue_paths = {
-        str(path)
-        for issue in report.get("issues") or []
-        if isinstance(issue, dict)
-        for path in issue.get("affected_paths") or []
-        if path
-    }
-    allowed_paths = set(report.get("missing_paths") or []) | issue_paths
-    non_english = set(report.get("non_target_language_terms") or [])
+    repair_scope = state.get("repair_scope") or {}
+    allowed_paths = set(repair_scope.get("allowed_paths") or [])
+    non_english = set(repair_scope.get("non_english") or [])
     overlay: Dict[str, Any] = {
         "document_version": int((state.get("scene_document") or {}).get("version") or 0),
         "depends_on_paths": sorted(allowed_paths),
@@ -120,5 +168,26 @@ add_positive and a missing negative constraint into add_negative using its exact
                 name="prompt_semantic_repairer",
             )
         ],
+    }
+# </agent-node>
+
+
+# <agent-node name="validate_repair">
+# 中文注意：
+# 1. 节点名 "validate_repair" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def validate_repair_node(
+    state: PromptSemanticRepairerState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Validate and normalize the bounded repair overlay."""
+
+    from app.agents.prompt_generation.models import RepairOverlay
+
+    overlay = RepairOverlay.model_validate(state.get("repair_overlay") or {})
+    return {
+        "repair_overlay": overlay.model_dump(mode="python"),
+        "repair_attempts": int(state.get("repair_attempts") or 0),
     }
 # </agent-node>

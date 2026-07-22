@@ -27,3 +27,4 @@ class SceneDocumentEditorState(TypedDict):
     clarification_request: Optional[str]
     clarification_options: Optional[List[Any]]
     editor_error: Optional[str]
+    prepared_context: Optional[Dict[str, Any]]

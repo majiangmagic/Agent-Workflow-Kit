@@ -12,6 +12,56 @@ from app.agents.prompt_generation.scene_document_editor.state import SceneDocume
 # - 节点名是 DSL 的稳定标识；节点名不变，刷新时保留对应代码块。
 # - 新 DSL 删除某个节点名时，对应代码块会被删除，不会因为里面有人写过代码而保留。
 
+# <agent-node name="prepare_context">
+# 中文注意：
+# 1. 节点名 "prepare_context" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def prepare_context_node(
+    state: SceneDocumentEditorState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Load the previous scene and normalize workflow input context."""
+
+    # prompt/model/temperature 来自本地 Agent manifest 和 Workflow 节点配置，
+    # 由运行时经 Workflow state 注入。
+    # 这里可以读取 state["system_prompt"], state["model"], state["temperature"]。
+    document, previous_ir = _load_previous_memory(state)
+    return {
+        "prepared_context": {
+            "previous_scene_document": document,
+            "previous_resolved_prompt_ir": previous_ir,
+            "user_input": str(state.get("user_input") or "").strip(),
+            "workflow_inputs": dict(state.get("workflow_inputs") or {}),
+        }
+    }
+# </agent-node>
+
+
+# <agent-node name="prepare_request">
+# 中文注意：
+# 1. 节点名 "prepare_request" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def prepare_request_node(
+    state: SceneDocumentEditorState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Normalize the user request and attach its request identifier."""
+
+    context = dict(state.get("prepared_context") or {})
+    workflow_inputs = dict(context.get("workflow_inputs") or {})
+    context.update(
+        {
+            "user_input": str(context.get("user_input") or "").strip(),
+            "workflow_inputs": workflow_inputs,
+            "request_id": str(workflow_inputs.get("_request_id") or ""),
+        }
+    )
+    return {"prepared_context": context}
+# </agent-node>
+
+
 # <agent-node name="propose_patch">
 import asyncio
 import json
@@ -305,6 +355,7 @@ async def propose_patch_node(
     )
     from app.services.ai_provider import AIProvider, ai_provider
 
+    state = {**state, **dict(state.get("prepared_context") or {})}
     document, previous_ir = _load_previous_memory(state)
     user_input = str(state.get("user_input") or "").strip()
     request_id = str((state.get("workflow_inputs") or {}).get("_request_id") or "")
@@ -459,4 +510,31 @@ for minors or age-ambiguous participants."""
             AIMessage(content="画面修改已转换为结构化 Patch。", name="scene_document_editor")
         ],
     }
+# </agent-node>
+
+
+# <agent-node name="validate_patch">
+# 中文注意：
+# 1. 节点名 "validate_patch" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def validate_patch_node(
+    state: SceneDocumentEditorState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Validate the generated patch against the current document version."""
+
+    from app.agents.prompt_generation.domain import (
+        normalize_scene_document,
+        validate_patch_proposal,
+    )
+
+    context = dict(state.get("prepared_context") or {})
+    document = normalize_scene_document(
+        context.get("previous_scene_document") or state.get("scene_document") or {}
+    )
+    proposal = validate_patch_proposal(
+        state.get("patch_proposal") or {}, int(document.get("version") or 0)
+    )
+    return {"patch_proposal": proposal}
 # </agent-node>

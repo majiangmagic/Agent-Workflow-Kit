@@ -12,6 +12,68 @@ from app.agents.prompt_generation.prompt_compiler.state import PromptCompilerSta
 # - 节点名是 DSL 的稳定标识；节点名不变，刷新时保留对应代码块。
 # - 新 DSL 删除某个节点名时，对应代码块会被删除，不会因为里面有人写过代码而保留。
 
+# <agent-node name="prepare_context">
+# 中文注意：
+# 1. 节点名 "prepare_context" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def prepare_context_node(
+    state: PromptCompilerState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Collect current and reusable Prompt IR inputs."""
+
+    # prompt/model/temperature 来自本地 Agent manifest 和 Workflow 节点配置，
+    # 由运行时经 Workflow state 注入。
+    # 这里可以读取 state["system_prompt"], state["model"], state["temperature"]。
+    previous_ir = dict(state.get("previous_resolved_prompt_ir") or {})
+    reusable_fields = (
+        "identity_terms",
+        "atomic_terms",
+        "relation_terms",
+        "negative_terms",
+        "identity_tag_records",
+        "identity_tag_resolutions",
+        "identity_tag_adjudication",
+        "visual_tag_records",
+        "visual_tag_resolutions",
+        "visual_tag_adjudication",
+    )
+    context = {
+        "previous_resolved_prompt_ir": previous_ir,
+        "scene_document": dict(state.get("scene_document") or {}),
+        "impact_set": dict(state.get("impact_set") or {}),
+        "repair_overlay": dict(state.get("repair_overlay") or {}),
+    }
+    for field in reusable_fields:
+        if field in state:
+            context[field] = state[field]
+        elif field in previous_ir:
+            context[field] = previous_ir[field]
+    return {"prepared_context": context}
+# </agent-node>
+
+
+# <agent-node name="collect_terms">
+# 中文注意：
+# 1. 节点名 "collect_terms" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def collect_terms_node(
+    state: PromptCompilerState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Collect and normalize semantic terms before compilation."""
+
+    context = dict(state.get("prepared_context") or {})
+    previous_ir = context.get("previous_resolved_prompt_ir") or {}
+    for field in ("identity_terms", "atomic_terms", "relation_terms", "negative_terms"):
+        value = context.get(field) if field in context else previous_ir.get(field)
+        context[f"prepared_{field}"] = _entries(value)
+    return {"prepared_context": context}
+# </agent-node>
+
+
 # <agent-node name="compile_prompt">
 import hashlib
 import re
@@ -194,15 +256,16 @@ def compile_prompt_node(
 
     from langchain_core.messages import AIMessage
 
+    state = {**state, **dict(state.get("prepared_context") or {})}
     previous_ir = state.get("previous_resolved_prompt_ir") or {}
 
     def current_or_previous(field: str) -> Any:
         return state.get(field) if field in state else previous_ir.get(field)
 
-    identity_terms = _entries(current_or_previous("identity_terms"))
-    atomic_terms = _entries(current_or_previous("atomic_terms"))
-    relation_terms = _entries(current_or_previous("relation_terms"))
-    negative_terms = _entries(current_or_previous("negative_terms"))
+    identity_terms = list(state.get("prepared_identity_terms") or _entries(current_or_previous("identity_terms")))
+    atomic_terms = list(state.get("prepared_atomic_terms") or _entries(current_or_previous("atomic_terms")))
+    relation_terms = list(state.get("prepared_relation_terms") or _entries(current_or_previous("relation_terms")))
+    negative_terms = list(state.get("prepared_negative_terms") or _entries(current_or_previous("negative_terms")))
     positive = _entries([*identity_terms, *atomic_terms, *relation_terms])
     negative = _entries(negative_terms)
     impact = state.get("impact_set") or {}
@@ -404,4 +467,22 @@ def compile_prompt_node(
             )
         ],
     }
+# </agent-node>
+
+
+# <agent-node name="validate_prompt_ir">
+# 中文注意：
+# 1. 节点名 "validate_prompt_ir" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def validate_prompt_ir_node(
+    state: PromptCompilerState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Validate and normalize the compiled Prompt IR."""
+
+    from app.agents.prompt_generation.models import PromptIR
+
+    prompt_ir = PromptIR.model_validate(state.get("resolved_prompt_ir") or {})
+    return {"resolved_prompt_ir": prompt_ir.model_dump(mode="python")}
 # </agent-node>

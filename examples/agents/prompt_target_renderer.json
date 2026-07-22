@@ -17,11 +17,20 @@
     "target_model": { "type": "string", "optional": true },
     "formatted_prompt": { "type": "string", "optional": true },
     "final_output": { "type": "dict", "optional": true },
-    "answer": { "type": "string", "optional": true }
+    "answer": { "type": "string", "optional": true },
+    "prepared_context": { "type": "dict", "optional": true }
   },
-  "entrypoint": "render_prompt",
+  "entrypoint": "prepare_context",
   "nodes": {
-    "render_prompt": { "handler": "render_prompt_node" }
+    "prepare_context": { "handler": "prepare_context_node" },
+    "validate_render_input": { "handler": "validate_render_input_node" },
+    "render_prompt": { "handler": "render_prompt_node" },
+    "validate_render_result": { "handler": "validate_render_result_node" }
   },
-  "edges": [{ "from": "render_prompt", "to": "END" }]
+  "edges": [
+    { "from": "prepare_context", "to": "validate_render_input" },
+    { "from": "validate_render_input", "to": "render_prompt" },
+    { "from": "render_prompt", "to": "validate_render_result" },
+    { "from": "validate_render_result", "to": "END" }
+  ]
 }

@@ -37,3 +37,4 @@ class PromptCompilerState(TypedDict):
     resolved_prompt_ir: Optional[Dict[str, Any]]
     draft_prompt: Optional[str]
     negative_prompt: Optional[str]
+    prepared_context: Optional[Dict[str, Any]]

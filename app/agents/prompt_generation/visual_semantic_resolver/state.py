@@ -30,3 +30,4 @@ class VisualSemanticResolverState(TypedDict):
     visual_tag_resolutions: Optional[List[Any]]
     visual_tag_adjudication: Optional[Dict[str, Any]]
     visual_search_terms: Optional[List[Any]]
+    prepared_context: Optional[Dict[str, Any]]

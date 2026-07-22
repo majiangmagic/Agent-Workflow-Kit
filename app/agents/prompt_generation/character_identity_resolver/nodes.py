@@ -12,6 +12,63 @@ from app.agents.prompt_generation.character_identity_resolver.state import Chara
 # - 节点名是 DSL 的稳定标识；节点名不变，刷新时保留对应代码块。
 # - 新 DSL 删除某个节点名时，对应代码块会被删除，不会因为里面有人写过代码而保留。
 
+# <agent-node name="prepare_context">
+# 中文注意：
+# 1. 节点名 "prepare_context" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def prepare_context_node(
+    state: CharacterIdentityResolverState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Isolate identity resolution inputs from workflow state."""
+
+    # prompt/model/temperature 来自本地 Agent manifest 和 Workflow 节点配置，
+    # 由运行时经 Workflow state 注入。
+    # 这里可以读取 state["system_prompt"], state["model"], state["temperature"]。
+    return {
+        "prepared_context": {
+            "scene_document": dict(state.get("scene_document") or {}),
+            "previous_resolved_prompt_ir": dict(
+                state.get("previous_resolved_prompt_ir") or {}
+            ),
+            "impact_set": dict(state.get("impact_set") or {}),
+        }
+    }
+# </agent-node>
+
+
+# <agent-node name="collect_identities">
+# 中文注意：
+# 1. 节点名 "collect_identities" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def collect_identities_node(
+    state: CharacterIdentityResolverState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Collect participants that have an explicit identity to resolve."""
+
+    context = dict(state.get("prepared_context") or {})
+    participants = (context.get("scene_document") or {}).get("participants") or {}
+    impact = context.get("impact_set") or {}
+    changed_ids = set(impact.get("identity_changed_participant_ids") or [])
+    incremental = bool(context.get("previous_resolved_prompt_ir")) and bool(changed_ids)
+    context["identity_candidates"] = [
+        {
+            "participant_id": participant_id,
+            "input_name": str((item.get("identity") or {}).get("input_name") or "").strip(),
+        }
+        for participant_id, item in participants.items()
+        if isinstance(item, dict)
+        and item.get("type") == "named_character"
+        and str((item.get("identity") or {}).get("input_name") or "").strip()
+        and (not incremental or participant_id in changed_ids)
+    ]
+    return {"prepared_context": context}
+# </agent-node>
+
+
 # <agent-node name="resolve_identities">
 import json
 import re
@@ -48,6 +105,7 @@ async def resolve_identities_node(
     from app.agents.prompt_generation.danbooru import resolve_tag_candidates, unique_text
     from app.services.ai_provider import AIProvider, ai_provider
 
+    state = {**state, **dict(state.get("prepared_context") or {})}
     document = state.get("scene_document") or {}
     previous_ir = state.get("previous_resolved_prompt_ir") or {}
     impact = state.get("impact_set") or {}
@@ -67,7 +125,7 @@ async def resolve_identities_node(
     changed_ids = set(impact.get("identity_changed_participant_ids") or [])
     deleted_ids = set(impact.get("identity_deleted_participant_ids") or [])
     incremental = bool(previous_ir) and bool(changed_ids)
-    named = [
+    named = list(state.get("identity_candidates") or [
         {
             "participant_id": participant_id,
             "input_name": str((participant.get("identity") or {}).get("input_name") or "").strip(),
@@ -76,7 +134,7 @@ async def resolve_identities_node(
         if participant.get("type") == "named_character"
         and str((participant.get("identity") or {}).get("input_name") or "").strip()
         and (not incremental or participant_id in changed_ids)
-    ]
+    ])
     resolved: list[Dict[str, Any]] = []
     model = None
     if named:
@@ -303,5 +361,29 @@ tags. If identity cannot be established, use name_only. Return only
                 name="character_identity_resolver",
             )
         ],
+    }
+# </agent-node>
+
+
+# <agent-node name="validate_identity_result">
+# 中文注意：
+# 1. 节点名 "validate_identity_result" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def validate_identity_result_node(
+    state: CharacterIdentityResolverState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Validate the identity resolver's public output contract."""
+
+    list_fields = ("identity_terms", "identity_tag_records", "identity_tag_resolutions")
+    for field in list_fields:
+        if not isinstance(state.get(field), list):
+            raise ValueError(f"identity resolver did not produce {field}")
+    if not isinstance(state.get("identity_tag_adjudication"), dict):
+        raise ValueError("identity resolver did not produce identity_tag_adjudication")
+    return {
+        **{field: list(state.get(field) or []) for field in list_fields},
+        "identity_tag_adjudication": dict(state.get("identity_tag_adjudication") or {}),
     }
 # </agent-node>

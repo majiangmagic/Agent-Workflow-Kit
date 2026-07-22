@@ -14,11 +14,20 @@
     "resolved_prompt_ir": { "type": "dict", "optional": true },
     "validation_report": { "type": "dict", "optional": true },
     "needs_repair": { "type": "boolean", "optional": true },
-    "has_blocking_errors": { "type": "boolean", "optional": true }
+    "has_blocking_errors": { "type": "boolean", "optional": true },
+    "prepared_context": { "type": "dict", "optional": true }
   },
-  "entrypoint": "validate_prompt",
+  "entrypoint": "prepare_context",
   "nodes": {
-    "validate_prompt": { "handler": "validate_prompt_node" }
+    "prepare_context": { "handler": "prepare_context_node" },
+    "collect_invariants": { "handler": "collect_invariants_node" },
+    "validate_prompt": { "handler": "validate_prompt_node" },
+    "finalize_validation": { "handler": "finalize_validation_node" }
   },
-  "edges": [{ "from": "validate_prompt", "to": "END" }]
+  "edges": [
+    { "from": "prepare_context", "to": "collect_invariants" },
+    { "from": "collect_invariants", "to": "validate_prompt" },
+    { "from": "validate_prompt", "to": "finalize_validation" },
+    { "from": "finalize_validation", "to": "END" }
+  ]
 }

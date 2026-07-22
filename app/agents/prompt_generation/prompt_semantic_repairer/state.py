@@ -25,3 +25,4 @@ class PromptSemanticRepairerState(TypedDict):
     validation_report: Optional[Dict[str, Any]]
     repair_overlay: Optional[Dict[str, Any]]
     repair_attempts: Optional[int]
+    prepared_context: Optional[Dict[str, Any]]

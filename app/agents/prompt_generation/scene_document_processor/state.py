@@ -29,3 +29,4 @@ class SceneDocumentProcessorState(TypedDict):
     clarification_request: Optional[str]
     clarification_options: Optional[List[Any]]
     document_valid: Optional[bool]
+    prepared_context: Optional[Dict[str, Any]]

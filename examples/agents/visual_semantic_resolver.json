@@ -19,11 +19,20 @@
     "visual_tag_records": { "type": "list", "optional": true },
     "visual_tag_resolutions": { "type": "list", "optional": true },
     "visual_tag_adjudication": { "type": "dict", "optional": true },
-    "visual_search_terms": { "type": "list", "optional": true }
+    "visual_search_terms": { "type": "list", "optional": true },
+    "prepared_context": { "type": "dict", "optional": true }
   },
-  "entrypoint": "resolve_visual_semantics",
+  "entrypoint": "prepare_context",
   "nodes": {
-    "resolve_visual_semantics": { "handler": "resolve_visual_semantics_node" }
+    "prepare_context": { "handler": "prepare_context_node" },
+    "prepare_semantics": { "handler": "prepare_semantics_node" },
+    "resolve_visual_semantics": { "handler": "resolve_visual_semantics_node" },
+    "validate_visual_result": { "handler": "validate_visual_result_node" }
   },
-  "edges": [{ "from": "resolve_visual_semantics", "to": "END" }]
+  "edges": [
+    { "from": "prepare_context", "to": "prepare_semantics" },
+    { "from": "prepare_semantics", "to": "resolve_visual_semantics" },
+    { "from": "resolve_visual_semantics", "to": "validate_visual_result" },
+    { "from": "validate_visual_result", "to": "END" }
+  ]
 }

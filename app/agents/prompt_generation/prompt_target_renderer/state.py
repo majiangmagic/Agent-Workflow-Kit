@@ -29,3 +29,4 @@ class PromptTargetRendererState(TypedDict):
     formatted_prompt: Optional[str]
     final_output: Optional[Dict[str, Any]]
     answer: Optional[str]
+    prepared_context: Optional[Dict[str, Any]]

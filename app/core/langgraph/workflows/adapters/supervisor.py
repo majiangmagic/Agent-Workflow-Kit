@@ -118,6 +118,7 @@ def build_workflow_agents(
         "status",
         "error",
         "tools",
+        "prepared_context",
     }
     return {
         node_name: {

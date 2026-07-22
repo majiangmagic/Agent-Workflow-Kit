@@ -121,33 +121,15 @@ function graphIntoDsl(data: DslData, nodes: Node<FlowNodeData>[], edges: Edge[])
   const originalEndEdges = (data.edges ?? []).filter(
     (edge) => edge.to === "END" && !edge.condition,
   );
-  const preservedConditionalEdges = (data.edges ?? []).filter((edge, groupIndex) => {
+  const preservedConditionalEdges = (data.edges ?? []).filter((edge) => {
     if (!edge.condition) return false;
-    if (!edge.otherwise) {
-      const sources = Array.isArray(edge.from) ? edge.from : [edge.from];
-      const targets = Array.isArray(edge.to) ? edge.to : [edge.to];
-      if (!sources.every((source) => nodeMap[source])) return false;
-      if (!targets.every((target) => target === "END" || nodeMap[target])) return false;
-      if (targets.includes("END")) return true;
-      return edges.some(
-        (candidate) => candidate.data?.group === groupIndex
-          && sources.includes(candidate.source)
-          && targets.includes(candidate.target),
-      );
-    }
-    const expectedTargets = new Set([
+    const sources = Array.isArray(edge.from) ? edge.from : [edge.from];
+    const targets = [
       ...(Array.isArray(edge.to) ? edge.to : [edge.to]),
-      edge.otherwise,
-    ]);
-    const currentTargets = new Set(
-      edges
-        .filter((candidate) => candidate.data?.group === groupIndex)
-        .map((candidate) => candidate.target),
-    );
-    return (
-      (Array.isArray(edge.from) ? edge.from : [edge.from]).every((source) => nodeMap[source]) &&
-      [...expectedTargets].every((target) => nodeMap[target] && currentTargets.has(target))
-    );
+      ...(edge.otherwise ? [edge.otherwise] : []),
+    ];
+    return sources.every((source) => nodeMap[source])
+      && targets.every((target) => target === "END" || nodeMap[target]);
   });
   const grouped = new Map<string, { from: string[]; to: string }>();
   edges.forEach((edge) => {

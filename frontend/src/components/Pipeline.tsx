@@ -5,12 +5,14 @@ import {
   MarkerType,
   Position,
   ReactFlow,
+  useNodesInitialized,
+  useReactFlow,
   type Edge,
   type Node,
   type NodeProps,
 } from "@xyflow/react";
 import { Check, Circle, LoaderCircle, RotateCcw, TriangleAlert } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type {
   EdgeSelection,
   NodeStatus,
@@ -53,6 +55,36 @@ function RuntimeNode({ data }: NodeProps<Node<RuntimeNodeData>>) {
 }
 
 const nodeTypes = { runtime: RuntimeNode };
+
+function AutoFitGraph({ signature }: { signature: string }) {
+  const { fitView } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
+  const anchorRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!nodesInitialized) return;
+
+    let frame = 0;
+    const refit = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        void fitView({ padding: 0.18, maxZoom: 1.15 });
+      });
+    };
+    refit();
+
+    const container = anchorRef.current?.closest(".runtime-graph");
+    const observer = container ? new ResizeObserver(refit) : null;
+    if (container) observer?.observe(container);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [fitView, nodesInitialized, signature]);
+
+  return <span aria-hidden ref={anchorRef} style={{ display: "none" }} />;
+}
 
 function expandedEdges(workflow: Workflow) {
   return workflow.edges.flatMap((edge, edgeIndex) =>
@@ -192,6 +224,7 @@ export function Pipeline({
     () => workflow ? buildGraph(workflow, statuses, durations, selectedEdges) : { nodes: [], edges: [] },
     [workflow, statuses, durations, selectedEdges],
   );
+  const graphSignature = graph.nodes.map((node) => node.id).join("|");
   return (
     <section className="pipeline" aria-label="工作流执行拓扑">
       <div className="pipeline-head">
@@ -224,6 +257,7 @@ export function Pipeline({
           >
             <Background color="#d3dbd7" gap={20} size={1} />
             <Controls position="bottom-right" showInteractive={false} />
+            <AutoFitGraph signature={graphSignature} />
           </ReactFlow>
         </div>
       ) : (

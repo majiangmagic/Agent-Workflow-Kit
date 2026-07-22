@@ -12,6 +12,67 @@ from app.agents.prompt_generation.scene_document_processor.state import SceneDoc
 # - 节点名是 DSL 的稳定标识；节点名不变，刷新时保留对应代码块。
 # - 新 DSL 删除某个节点名时，对应代码块会被删除，不会因为里面有人写过代码而保留。
 
+# <agent-node name="prepare_context">
+# 中文注意：
+# 1. 节点名 "prepare_context" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def prepare_context_node(
+    state: SceneDocumentProcessorState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Normalize the document, patch and clarification inputs."""
+
+    # prompt/model/temperature 来自本地 Agent manifest 和 Workflow 节点配置，
+    # 由运行时经 Workflow state 注入。
+    # 这里可以读取 state["system_prompt"], state["model"], state["temperature"]。
+    from app.agents.prompt_generation.domain import (
+        empty_scene_document,
+        normalize_scene_document,
+    )
+
+    previous = normalize_scene_document(
+        state.get("previous_scene_document")
+        or state.get("scene_document")
+        or empty_scene_document()
+    )
+    return {
+        "prepared_context": {
+            "previous_scene_document": previous,
+            "patch_proposal": dict(state.get("patch_proposal") or {}),
+            "clarification_request": state.get("clarification_request"),
+            "clarification_options": list(state.get("clarification_options") or []),
+        }
+    }
+# </agent-node>
+
+
+# <agent-node name="validate_patch">
+# 中文注意：
+# 1. 节点名 "validate_patch" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def validate_patch_node(
+    state: SceneDocumentProcessorState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Pre-validate the patch while preserving the processor's fallback path."""
+
+    from app.agents.prompt_generation.domain import validate_patch_proposal
+
+    context = dict(state.get("prepared_context") or {})
+    previous = context.get("previous_scene_document") or {}
+    try:
+        context["patch_proposal"] = validate_patch_proposal(
+            context.get("patch_proposal") or {}, int(previous.get("version") or 0)
+        )
+        context["patch_validation_error"] = ""
+    except (TypeError, ValueError) as exc:
+        context["patch_validation_error"] = str(exc)
+    return {"prepared_context": context}
+# </agent-node>
+
+
 # <agent-node name="apply_patch">
 import hashlib
 
@@ -38,6 +99,7 @@ def apply_patch_node(
         validate_patch_proposal,
     )
 
+    state = {**state, **dict(state.get("prepared_context") or {})}
     previous = normalize_scene_document(
         state.get("previous_scene_document")
         or state.get("scene_document")
@@ -175,4 +237,25 @@ def apply_patch_node(
             )
         ],
     }
+# </agent-node>
+
+
+# <agent-node name="validate_document">
+# 中文注意：
+# 1. 节点名 "validate_document" 是 DSL 的稳定标识，不要随手改名。
+# 2. 只要 DSL 里还保留这个节点名，刷新骨架时会保留本代码块里的业务逻辑。
+# 3. 如果新 DSL 删除了这个节点名，生成器会删除整个代码块，即使里面写过业务代码。
+def validate_document_node(
+    state: SceneDocumentProcessorState,
+    config: RunnableConfig | None = None,
+) -> Dict[str, Any]:
+    """Normalize the committed document and verify processor output types."""
+
+    from app.agents.prompt_generation.domain import normalize_scene_document
+
+    if not isinstance(state.get("impact_set"), dict):
+        raise ValueError("scene document processor did not produce an impact_set")
+    if not isinstance(state.get("document_valid"), bool):
+        raise ValueError("scene document processor did not produce document_valid")
+    return {"scene_document": normalize_scene_document(state.get("scene_document") or {})}
 # </agent-node>
