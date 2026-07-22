@@ -102,14 +102,35 @@ function buildGraph(
   const ranks = shortestRanks(workflow);
   const fallbackRank = Math.max(0, ...Object.values(ranks)) + 1;
   const rowsByRank: Record<number, number> = {};
+  const supervisorName = workflow.nodes.find(
+    (node) => node.agent === "official_supervisor"
+      && workflow.edges.some((edge) => edge.from === node.name && edge.conditional),
+  )?.name;
+  const supervised = Boolean(supervisorName);
+  const workerOrder = new Map(
+    workflow.edges
+      .filter((edge) => edge.from === supervisorName && edge.to !== "END")
+      .map((edge) => edge.to)
+      .filter((name, index, names) => names.indexOf(name) === index)
+      .map((name, index) => [name, index] as const),
+  );
   const nodes = workflow.nodes.map((workflowNode) => {
     const rank = ranks[workflowNode.name] ?? fallbackRank;
     const row = rowsByRank[rank] ?? 0;
     rowsByRank[rank] = row + 1;
+    const workerIndex = workerOrder.get(workflowNode.name);
+    const position = supervised
+      ? workflowNode.name === supervisorName
+        ? { x: 36, y: 72 }
+        : {
+            x: 278 + ((workerIndex ?? 0) % 5) * 212,
+            y: 24 + Math.floor((workerIndex ?? 0) / 5) * 92,
+          }
+      : { x: 36 + rank * 224, y: 26 + row * 86 };
     return {
       id: workflowNode.name,
       type: "runtime",
-      position: { x: 36 + rank * 224, y: 26 + row * 86 },
+      position,
       data: {
         workflowNode,
         status: statuses[workflowNode.name] ?? "idle",
@@ -135,7 +156,9 @@ function buildGraph(
         target,
         type: loop ? "default" : "smoothstep",
         animated: traversed && statuses[target] === "running",
-        label: loop ? "回到编译" : branchLabel(edge, selection),
+        label: loop
+          ? supervised && target === supervisorName ? "返回监管" : "回到编译"
+          : branchLabel(edge, selection),
         markerEnd: { type: MarkerType.ArrowClosed, color: stroke, width: 16, height: 16 },
         style: {
           stroke,

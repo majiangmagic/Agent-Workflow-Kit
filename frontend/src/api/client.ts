@@ -79,11 +79,12 @@ export async function streamChat(
   workflowInputs: WorkflowInputs,
   onEvent: (event: Record<string, unknown>) => void,
   signal?: AbortSignal,
+  resume = false,
 ): Promise<string> {
   const response = await fetch(`/api/conversations/${conversationId}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, workflow_inputs: workflowInputs }),
+    body: JSON.stringify({ message, workflow_inputs: workflowInputs, resume }),
     signal,
   });
   if (!response.ok || !response.body) {

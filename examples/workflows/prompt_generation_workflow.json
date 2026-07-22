@@ -2,7 +2,7 @@
   "version": 2,
   "kind": "workflow",
   "name": "prompt_generation_workflow",
-  "entrypoint": "scene_document_editor",
+  "entrypoint": "supervisor",
   "ui": {
     "title": "图像提示词工程",
     "description": "持续编辑结构化画面，并编译为目标生图模型可用的 Prompt",
@@ -37,6 +37,17 @@
     ]
   },
   "nodes": {
+    "supervisor": {
+      "agent": "official_supervisor",
+      "display_name": "监管提示词流程",
+      "extension": "supervisor",
+      "config": {
+        "prompt": "你是图像提示词工程工作流的监管者。你不直接编写、修改或猜测提示词，只负责按共享状态调度真实 Agent。标准顺序：先运行 scene_document_editor 理解本轮新建或修改意图，再运行 scene_document_processor 应用结构化 Patch。文档无效或缺少只有用户才能提供的信息时，必须调用 request_user_input 暂停并提出具体问题；恢复后重新运行受影响步骤。文档有效后运行 identity_impact_router；身份变化时运行 character_identity_resolver。随后运行 visual_impact_router；视觉事实变化时运行 visual_semantic_resolver。然后必须运行 prompt_compiler 和 consistency_validator。校验存在可恢复问题时运行 semantic_repairer，再回到 prompt_compiler 和 consistency_validator；校验通过后运行 target_renderer。首次请求必须完成完整必要链路；多轮编辑可以根据 impact 跳过身份或视觉解析，但不得跳过 processor、compiler、validator 和 renderer。Worker 失败时先根据错误判断是否重试同一步；上游数据错误时回退到产生该数据的 Worker；不要通过普通文本假装询问用户，也不要在 renderer 产生最终结果前结束。",
+        "model": "deepseek-v4-pro",
+        "temperature": 0.1,
+        "max_retries_per_node": 2
+      }
+    },
     "scene_document_editor": {
       "agent": "scene_document_editor",
       "display_name": "解析画面需求",
@@ -160,56 +171,26 @@
     }
   },
   "edges": [
-    { "from": "scene_document_editor", "to": "scene_document_processor" },
-    {
-      "from": "scene_document_processor",
-      "to": "identity_impact_router",
-      "otherwise": "target_renderer",
-      "condition": {
-        "path": "nodes.scene_document_processor.document_valid",
-        "operator": "equals",
-        "value": true
-      }
-    },
-    {
-      "from": "identity_impact_router",
-      "to": "character_identity_resolver",
-      "otherwise": "visual_impact_router",
-      "condition": {
-        "path": "nodes.identity_impact_router.should_resolve_identity",
-        "operator": "equals",
-        "value": true
-      }
-    },
-    { "from": "character_identity_resolver", "to": "visual_impact_router" },
-    {
-      "from": "visual_impact_router",
-      "to": "visual_semantic_resolver",
-      "otherwise": "prompt_compiler",
-      "condition": {
-        "path": "nodes.visual_impact_router.should_resolve_visual",
-        "operator": "equals",
-        "value": true
-      }
-    },
-    { "from": "visual_semantic_resolver", "to": "prompt_compiler" },
-    { "from": "prompt_compiler", "to": "consistency_validator" },
-    {
-      "from": "consistency_validator",
-      "to": "semantic_repairer",
-      "otherwise": "target_renderer",
-      "condition": {
-        "path": "nodes.consistency_validator.needs_repair",
-        "operator": "equals",
-        "value": true
-      },
-      "loop": {
-        "counter_path": "nodes.semantic_repairer.repair_attempts",
-        "max_iterations": 1,
-        "exhausted": "target_renderer"
-      }
-    },
-    { "from": "semantic_repairer", "to": "prompt_compiler" },
-    { "from": "target_renderer", "to": "END" }
+    { "from": "supervisor", "to": "scene_document_editor", "condition": { "path": "nodes.supervisor.next_node", "operator": "equals", "value": "scene_document_editor" } },
+    { "from": "supervisor", "to": "scene_document_processor", "condition": { "path": "nodes.supervisor.next_node", "operator": "equals", "value": "scene_document_processor" } },
+    { "from": "supervisor", "to": "identity_impact_router", "condition": { "path": "nodes.supervisor.next_node", "operator": "equals", "value": "identity_impact_router" } },
+    { "from": "supervisor", "to": "character_identity_resolver", "condition": { "path": "nodes.supervisor.next_node", "operator": "equals", "value": "character_identity_resolver" } },
+    { "from": "supervisor", "to": "visual_impact_router", "condition": { "path": "nodes.supervisor.next_node", "operator": "equals", "value": "visual_impact_router" } },
+    { "from": "supervisor", "to": "visual_semantic_resolver", "condition": { "path": "nodes.supervisor.next_node", "operator": "equals", "value": "visual_semantic_resolver" } },
+    { "from": "supervisor", "to": "prompt_compiler", "condition": { "path": "nodes.supervisor.next_node", "operator": "equals", "value": "prompt_compiler" } },
+    { "from": "supervisor", "to": "consistency_validator", "condition": { "path": "nodes.supervisor.next_node", "operator": "equals", "value": "consistency_validator" } },
+    { "from": "supervisor", "to": "semantic_repairer", "condition": { "path": "nodes.supervisor.next_node", "operator": "equals", "value": "semantic_repairer" } },
+    { "from": "supervisor", "to": "target_renderer", "condition": { "path": "nodes.supervisor.next_node", "operator": "equals", "value": "target_renderer" } },
+    { "from": "scene_document_editor", "to": "supervisor" },
+    { "from": "scene_document_processor", "to": "supervisor" },
+    { "from": "identity_impact_router", "to": "supervisor" },
+    { "from": "character_identity_resolver", "to": "supervisor" },
+    { "from": "visual_impact_router", "to": "supervisor" },
+    { "from": "visual_semantic_resolver", "to": "supervisor" },
+    { "from": "prompt_compiler", "to": "supervisor" },
+    { "from": "consistency_validator", "to": "supervisor" },
+    { "from": "semantic_repairer", "to": "supervisor" },
+    { "from": "target_renderer", "to": "supervisor" },
+    { "from": "supervisor", "to": "END", "condition": { "path": "nodes.supervisor.next_node", "operator": "equals", "value": "END" } }
   ]
 }

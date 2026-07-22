@@ -81,9 +81,17 @@ export type ClarificationRequest = {
   options: string[];
 };
 
+export type WorkflowInterrupt = ClarificationRequest & {
+  id?: string;
+  kind?: string;
+  context?: string;
+};
+
 export type WorkflowResultMetadata = {
   status?: "valid" | "degraded" | "failed" | "needs_clarification";
   clarification_request?: ClarificationRequest | null;
+  resumable?: boolean;
+  interrupt?: WorkflowInterrupt | null;
 };
 
 export type WorkflowEvent = {

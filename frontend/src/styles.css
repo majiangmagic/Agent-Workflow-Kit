@@ -259,6 +259,104 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .dialog-warning { color: #c46d63; }
 .confirm-dialog h3 { margin: 10px 0 0; font-size: 16px; }
 .confirm-dialog p { margin: 8px 0 0; color: #68756f; font-size: 12px; line-height: 1.6; }
+
+.workflow-interrupt-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(14, 23, 19, .52);
+}
+.workflow-interrupt-dialog {
+  width: min(520px, 100%);
+  border: 1px solid #cfd8d3;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(12, 24, 18, .28);
+  overflow: hidden;
+}
+.workflow-interrupt-dialog > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid #e4e9e6;
+}
+.workflow-interrupt-heading { display: flex; align-items: center; gap: 11px; }
+.workflow-interrupt-heading > div { display: grid; gap: 2px; }
+.workflow-interrupt-heading span { color: #718079; font-size: 11px; }
+.workflow-interrupt-heading h2 { margin: 0; font-size: 17px; letter-spacing: 0; }
+.workflow-interrupt-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: #edf5f1;
+  color: #247351;
+}
+.workflow-interrupt-question {
+  margin: 0;
+  padding: 18px 20px 0;
+  color: #26342f;
+  font-size: 14px;
+  line-height: 1.65;
+}
+.workflow-interrupt-context {
+  margin: 8px 20px 0;
+  color: #6f7c76;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.workflow-interrupt-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px 20px 0;
+}
+.workflow-interrupt-options button {
+  min-height: 34px;
+  border: 1px solid #b8cbc1;
+  border-radius: 6px;
+  background: #f5faf7;
+  color: #245f46;
+  padding: 0 12px;
+  cursor: pointer;
+}
+.workflow-interrupt-dialog form { padding: 18px 20px 20px; }
+.workflow-interrupt-dialog form label {
+  display: block;
+  margin-bottom: 7px;
+  color: #596760;
+  font-size: 11px;
+  font-weight: 700;
+}
+.workflow-interrupt-dialog textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  border: 1px solid #cbd5d0;
+  border-radius: 6px;
+  padding: 11px 12px;
+  color: #1c2823;
+  font: inherit;
+  line-height: 1.55;
+}
+.workflow-interrupt-dialog textarea:focus {
+  border-color: #388466;
+  outline: 3px solid rgba(56, 132, 102, .12);
+}
+.workflow-interrupt-dialog footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+.workflow-interrupt-dialog footer span { color: #7a8781; font-size: 11px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .sidebar-backdrop { display: none; }
 

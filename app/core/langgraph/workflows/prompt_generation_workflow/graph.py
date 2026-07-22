@@ -13,7 +13,8 @@ from app.agents.prompt_generation.scene_document_processor.graph import create_g
 from app.agents.prompt_generation.visual_semantic_resolver.graph import create_graph as create_prompt_generation_visual_semantic_resolver_graph
 from langgraph.graph import END, StateGraph
 from app.core.langgraph.workflows.adapters.agent import create_pipeline_context_extension
-from app.core.langgraph.workflows.adapters.routing import create_state_condition_router
+from app.core.langgraph.workflows.adapters.supervisor import create_supervisor_extension
+from app.agents.official_supervisor.graph import create_workflow_supervisor_graph
 from app.core.langgraph.checkpoint import get_checkpointer
 from app.core.langgraph.store import get_store
 from app.core.langgraph.workflows.adapters.agent import create_agent_node
@@ -24,7 +25,7 @@ from app.core.langgraph.workflows.prompt_generation_workflow.state import (
 )
 
 WORKFLOW_NAME = "prompt_generation_workflow"
-WORKFLOW_METADATA = {'entrypoint': 'scene_document_editor', 'nodes': [{'name': 'scene_document_editor', 'agent': 'scene_document_editor', 'display_name': '解析画面需求', 'on_error': 'fail'}, {'name': 'scene_document_processor', 'agent': 'scene_document_processor', 'display_name': '构建画面工程', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_editor.scene_document', 'previous_scene_document': 'scene_document_editor.previous_scene_document', 'previous_resolved_prompt_ir': 'scene_document_editor.previous_resolved_prompt_ir', 'patch_proposal': 'scene_document_editor.patch_proposal', 'clarification_request': 'scene_document_editor.clarification_request', 'clarification_options': 'scene_document_editor.clarification_options'}}, {'name': 'identity_impact_router', 'agent': 'prompt_impact_router', 'display_name': '判断身份变化', 'on_error': 'fail', 'state_agent': 'prompt_impact_router', 'inputs': {'impact_set': 'scene_document_processor.impact_set'}}, {'name': 'character_identity_resolver', 'agent': 'character_identity_resolver', 'display_name': '解析角色身份', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_processor.scene_document', 'previous_resolved_prompt_ir': 'scene_document_processor.previous_resolved_prompt_ir', 'impact_set': 'scene_document_processor.impact_set'}}, {'name': 'visual_impact_router', 'agent': 'prompt_impact_router', 'display_name': '判断视觉变化', 'on_error': 'fail', 'state_agent': 'prompt_impact_router', 'inputs': {'impact_set': 'scene_document_processor.impact_set'}}, {'name': 'visual_semantic_resolver', 'agent': 'visual_semantic_resolver', 'display_name': '解析视觉语义', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_processor.scene_document', 'previous_resolved_prompt_ir': 'scene_document_processor.previous_resolved_prompt_ir', 'impact_set': 'scene_document_processor.impact_set'}}, {'name': 'prompt_compiler', 'agent': 'prompt_compiler', 'display_name': '编译 Prompt IR', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_processor.scene_document', 'impact_set': 'scene_document_processor.impact_set', 'previous_resolved_prompt_ir': 'scene_document_processor.previous_resolved_prompt_ir', 'identity_terms': 'character_identity_resolver.identity_terms', 'identity_tag_records': 'character_identity_resolver.identity_tag_records', 'identity_tag_resolutions': 'character_identity_resolver.identity_tag_resolutions', 'identity_tag_adjudication': 'character_identity_resolver.identity_tag_adjudication', 'visual_search_terms': 'visual_semantic_resolver.visual_search_terms', 'atomic_terms': 'visual_semantic_resolver.atomic_terms', 'relation_terms': 'visual_semantic_resolver.relation_terms', 'negative_terms': 'visual_semantic_resolver.negative_terms', 'visual_tag_records': 'visual_semantic_resolver.visual_tag_records', 'visual_tag_resolutions': 'visual_semantic_resolver.visual_tag_resolutions', 'visual_tag_adjudication': 'visual_semantic_resolver.visual_tag_adjudication', 'repair_overlay': 'semantic_repairer.repair_overlay'}}, {'name': 'consistency_validator', 'agent': 'prompt_consistency_validator', 'display_name': '检查一致性', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_processor.scene_document', 'impact_set': 'scene_document_processor.impact_set', 'resolved_prompt_ir': 'prompt_compiler.resolved_prompt_ir'}}, {'name': 'semantic_repairer', 'agent': 'prompt_semantic_repairer', 'display_name': '定向修复', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_processor.scene_document', 'resolved_prompt_ir': 'prompt_compiler.resolved_prompt_ir', 'validation_report': 'consistency_validator.validation_report'}}, {'name': 'target_renderer', 'agent': 'prompt_target_renderer', 'display_name': '渲染并校验输出', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_processor.scene_document', 'resolved_prompt_ir': 'prompt_compiler.resolved_prompt_ir', 'validation_report': 'consistency_validator.validation_report', 'clarification_request': 'scene_document_processor.clarification_request', 'clarification_options': 'scene_document_processor.clarification_options'}}], 'edges': [{'from': 'scene_document_editor', 'to': 'scene_document_processor'}, {'from': 'character_identity_resolver', 'to': 'visual_impact_router'}, {'from': 'visual_semantic_resolver', 'to': 'prompt_compiler'}, {'from': 'prompt_compiler', 'to': 'consistency_validator'}, {'from': 'semantic_repairer', 'to': 'prompt_compiler'}, {'from': 'target_renderer', 'to': 'END'}, {'from': 'scene_document_processor', 'to': 'identity_impact_router', 'conditional': True, 'branch': 'then', 'condition': {'path': 'nodes.scene_document_processor.document_valid', 'operator': 'equals', 'value': True}}, {'from': 'scene_document_processor', 'to': 'target_renderer', 'conditional': True, 'branch': 'otherwise'}, {'from': 'identity_impact_router', 'to': 'character_identity_resolver', 'conditional': True, 'branch': 'then', 'condition': {'path': 'nodes.identity_impact_router.should_resolve_identity', 'operator': 'equals', 'value': True}}, {'from': 'identity_impact_router', 'to': 'visual_impact_router', 'conditional': True, 'branch': 'otherwise'}, {'from': 'visual_impact_router', 'to': 'visual_semantic_resolver', 'conditional': True, 'branch': 'then', 'condition': {'path': 'nodes.visual_impact_router.should_resolve_visual', 'operator': 'equals', 'value': True}}, {'from': 'visual_impact_router', 'to': 'prompt_compiler', 'conditional': True, 'branch': 'otherwise'}, {'from': 'consistency_validator', 'to': 'semantic_repairer', 'conditional': True, 'branch': 'then', 'condition': {'path': 'nodes.consistency_validator.needs_repair', 'operator': 'equals', 'value': True}, 'loop': {'counter_path': 'nodes.semantic_repairer.repair_attempts', 'max_iterations': 1, 'exhausted': 'target_renderer'}}, {'from': 'consistency_validator', 'to': 'target_renderer', 'conditional': True, 'branch': 'otherwise'}], 'ui': {'title': '图像提示词工程', 'description': '持续编辑结构化画面，并编译为目标生图模型可用的 Prompt', 'input_placeholder': '描述画面，或继续修改人物、动作、关系、场景与构图……', 'input_hint': '支持多轮修改；未指定时使用 NAI V4', 'controls': [{'key': 'prompt_strategy', 'label': '提示策略', 'type': 'segmented', 'default': 'expressive', 'options': [{'value': 'expressive', 'label': '积极扩写'}, {'value': 'faithful', 'label': '保守还原'}]}, {'key': 'target_model', 'label': '目标模型', 'type': 'select', 'default': 'nai_v4', 'options': [{'value': 'nai_v4', 'label': 'NAI V4（混合提示）'}, {'value': 'nai_v3', 'label': 'NAI V3（标签优先）'}, {'value': 'sdxl', 'label': 'SDXL'}, {'value': 'illustrious', 'label': 'Illustrious / 光辉'}, {'value': 'pony', 'label': 'Pony'}, {'value': 'flux', 'label': 'Flux'}, {'value': 'auto', 'label': '从需求识别'}]}]}}
+WORKFLOW_METADATA = {'entrypoint': 'supervisor', 'nodes': [{'name': 'supervisor', 'agent': 'official_supervisor', 'display_name': '监管提示词流程', 'on_error': 'fail', 'config': {'prompt': '你是图像提示词工程工作流的监管者。你不直接编写、修改或猜测提示词，只负责按共享状态调度真实 Agent。标准顺序：先运行 scene_document_editor 理解本轮新建或修改意图，再运行 scene_document_processor 应用结构化 Patch。文档无效或缺少只有用户才能提供的信息时，必须调用 request_user_input 暂停并提出具体问题；恢复后重新运行受影响步骤。文档有效后运行 identity_impact_router；身份变化时运行 character_identity_resolver。随后运行 visual_impact_router；视觉事实变化时运行 visual_semantic_resolver。然后必须运行 prompt_compiler 和 consistency_validator。校验存在可恢复问题时运行 semantic_repairer，再回到 prompt_compiler 和 consistency_validator；校验通过后运行 target_renderer。首次请求必须完成完整必要链路；多轮编辑可以根据 impact 跳过身份或视觉解析，但不得跳过 processor、compiler、validator 和 renderer。Worker 失败时先根据错误判断是否重试同一步；上游数据错误时回退到产生该数据的 Worker；不要通过普通文本假装询问用户，也不要在 renderer 产生最终结果前结束。', 'model': 'deepseek-v4-pro', 'temperature': 0.1, 'max_retries_per_node': 2}}, {'name': 'scene_document_editor', 'agent': 'scene_document_editor', 'display_name': '解析画面需求', 'on_error': 'fail'}, {'name': 'scene_document_processor', 'agent': 'scene_document_processor', 'display_name': '构建画面工程', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_editor.scene_document', 'previous_scene_document': 'scene_document_editor.previous_scene_document', 'previous_resolved_prompt_ir': 'scene_document_editor.previous_resolved_prompt_ir', 'patch_proposal': 'scene_document_editor.patch_proposal', 'clarification_request': 'scene_document_editor.clarification_request', 'clarification_options': 'scene_document_editor.clarification_options'}}, {'name': 'identity_impact_router', 'agent': 'prompt_impact_router', 'display_name': '判断身份变化', 'on_error': 'fail', 'state_agent': 'prompt_impact_router', 'inputs': {'impact_set': 'scene_document_processor.impact_set'}}, {'name': 'character_identity_resolver', 'agent': 'character_identity_resolver', 'display_name': '解析角色身份', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_processor.scene_document', 'previous_resolved_prompt_ir': 'scene_document_processor.previous_resolved_prompt_ir', 'impact_set': 'scene_document_processor.impact_set'}}, {'name': 'visual_impact_router', 'agent': 'prompt_impact_router', 'display_name': '判断视觉变化', 'on_error': 'fail', 'state_agent': 'prompt_impact_router', 'inputs': {'impact_set': 'scene_document_processor.impact_set'}}, {'name': 'visual_semantic_resolver', 'agent': 'visual_semantic_resolver', 'display_name': '解析视觉语义', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_processor.scene_document', 'previous_resolved_prompt_ir': 'scene_document_processor.previous_resolved_prompt_ir', 'impact_set': 'scene_document_processor.impact_set'}}, {'name': 'prompt_compiler', 'agent': 'prompt_compiler', 'display_name': '编译 Prompt IR', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_processor.scene_document', 'impact_set': 'scene_document_processor.impact_set', 'previous_resolved_prompt_ir': 'scene_document_processor.previous_resolved_prompt_ir', 'identity_terms': 'character_identity_resolver.identity_terms', 'identity_tag_records': 'character_identity_resolver.identity_tag_records', 'identity_tag_resolutions': 'character_identity_resolver.identity_tag_resolutions', 'identity_tag_adjudication': 'character_identity_resolver.identity_tag_adjudication', 'visual_search_terms': 'visual_semantic_resolver.visual_search_terms', 'atomic_terms': 'visual_semantic_resolver.atomic_terms', 'relation_terms': 'visual_semantic_resolver.relation_terms', 'negative_terms': 'visual_semantic_resolver.negative_terms', 'visual_tag_records': 'visual_semantic_resolver.visual_tag_records', 'visual_tag_resolutions': 'visual_semantic_resolver.visual_tag_resolutions', 'visual_tag_adjudication': 'visual_semantic_resolver.visual_tag_adjudication', 'repair_overlay': 'semantic_repairer.repair_overlay'}}, {'name': 'consistency_validator', 'agent': 'prompt_consistency_validator', 'display_name': '检查一致性', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_processor.scene_document', 'impact_set': 'scene_document_processor.impact_set', 'resolved_prompt_ir': 'prompt_compiler.resolved_prompt_ir'}}, {'name': 'semantic_repairer', 'agent': 'prompt_semantic_repairer', 'display_name': '定向修复', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_processor.scene_document', 'resolved_prompt_ir': 'prompt_compiler.resolved_prompt_ir', 'validation_report': 'consistency_validator.validation_report'}}, {'name': 'target_renderer', 'agent': 'prompt_target_renderer', 'display_name': '渲染并校验输出', 'on_error': 'fail', 'inputs': {'scene_document': 'scene_document_processor.scene_document', 'resolved_prompt_ir': 'prompt_compiler.resolved_prompt_ir', 'validation_report': 'consistency_validator.validation_report', 'clarification_request': 'scene_document_processor.clarification_request', 'clarification_options': 'scene_document_processor.clarification_options'}}], 'edges': [{'from': 'scene_document_editor', 'to': 'supervisor'}, {'from': 'scene_document_processor', 'to': 'supervisor'}, {'from': 'identity_impact_router', 'to': 'supervisor'}, {'from': 'character_identity_resolver', 'to': 'supervisor'}, {'from': 'visual_impact_router', 'to': 'supervisor'}, {'from': 'visual_semantic_resolver', 'to': 'supervisor'}, {'from': 'prompt_compiler', 'to': 'supervisor'}, {'from': 'consistency_validator', 'to': 'supervisor'}, {'from': 'semantic_repairer', 'to': 'supervisor'}, {'from': 'target_renderer', 'to': 'supervisor'}, {'from': 'supervisor', 'to': 'scene_document_editor', 'conditional': True, 'condition': {'path': 'nodes.supervisor.next_node', 'operator': 'equals', 'value': 'scene_document_editor'}}, {'from': 'supervisor', 'to': 'scene_document_processor', 'conditional': True, 'condition': {'path': 'nodes.supervisor.next_node', 'operator': 'equals', 'value': 'scene_document_processor'}}, {'from': 'supervisor', 'to': 'identity_impact_router', 'conditional': True, 'condition': {'path': 'nodes.supervisor.next_node', 'operator': 'equals', 'value': 'identity_impact_router'}}, {'from': 'supervisor', 'to': 'character_identity_resolver', 'conditional': True, 'condition': {'path': 'nodes.supervisor.next_node', 'operator': 'equals', 'value': 'character_identity_resolver'}}, {'from': 'supervisor', 'to': 'visual_impact_router', 'conditional': True, 'condition': {'path': 'nodes.supervisor.next_node', 'operator': 'equals', 'value': 'visual_impact_router'}}, {'from': 'supervisor', 'to': 'visual_semantic_resolver', 'conditional': True, 'condition': {'path': 'nodes.supervisor.next_node', 'operator': 'equals', 'value': 'visual_semantic_resolver'}}, {'from': 'supervisor', 'to': 'prompt_compiler', 'conditional': True, 'condition': {'path': 'nodes.supervisor.next_node', 'operator': 'equals', 'value': 'prompt_compiler'}}, {'from': 'supervisor', 'to': 'consistency_validator', 'conditional': True, 'condition': {'path': 'nodes.supervisor.next_node', 'operator': 'equals', 'value': 'consistency_validator'}}, {'from': 'supervisor', 'to': 'semantic_repairer', 'conditional': True, 'condition': {'path': 'nodes.supervisor.next_node', 'operator': 'equals', 'value': 'semantic_repairer'}}, {'from': 'supervisor', 'to': 'target_renderer', 'conditional': True, 'condition': {'path': 'nodes.supervisor.next_node', 'operator': 'equals', 'value': 'target_renderer'}}, {'from': 'supervisor', 'to': 'END', 'conditional': True, 'condition': {'path': 'nodes.supervisor.next_node', 'operator': 'equals', 'value': 'END'}}], 'ui': {'title': '图像提示词工程', 'description': '持续编辑结构化画面，并编译为目标生图模型可用的 Prompt', 'input_placeholder': '描述画面，或继续修改人物、动作、关系、场景与构图……', 'input_hint': '支持多轮修改；未指定时使用 NAI V4', 'controls': [{'key': 'prompt_strategy', 'label': '提示策略', 'type': 'segmented', 'default': 'expressive', 'options': [{'value': 'expressive', 'label': '积极扩写'}, {'value': 'faithful', 'label': '保守还原'}]}, {'key': 'target_model', 'label': '目标模型', 'type': 'select', 'default': 'nai_v4', 'options': [{'value': 'nai_v4', 'label': 'NAI V4（混合提示）'}, {'value': 'nai_v3', 'label': 'NAI V3（标签优先）'}, {'value': 'sdxl', 'label': 'SDXL'}, {'value': 'illustrious', 'label': 'Illustrious / 光辉'}, {'value': 'pony', 'label': 'Pony'}, {'value': 'flux', 'label': 'Flux'}, {'value': 'auto', 'label': '从需求识别'}]}]}}
 
 
 def create_prompt_generation_workflow_graph(
@@ -34,6 +35,19 @@ def create_prompt_generation_workflow_graph(
     """Create this workflow with native LangGraph primitives."""
 
     workflow = StateGraph(PromptGenerationWorkflowState)
+    workflow.add_node(
+        'supervisor',
+        create_agent_node(
+            'supervisor',
+            create_workflow_supervisor_graph(
+                node_name='supervisor',
+                agents=agents,
+                worker_names=['scene_document_editor', 'scene_document_processor', 'identity_impact_router', 'character_identity_resolver', 'visual_impact_router', 'visual_semantic_resolver', 'prompt_compiler', 'consistency_validator', 'semantic_repairer', 'target_renderer'],
+                max_retries_per_node=2,
+            ),
+            extension=create_supervisor_extension('supervisor'),
+        ),
+    )
     workflow.add_node(
         "scene_document_editor",
         create_agent_node(
@@ -114,83 +128,34 @@ def create_prompt_generation_workflow_graph(
             extension=create_pipeline_context_extension("target_renderer", inputs={'scene_document': 'scene_document_processor.scene_document', 'resolved_prompt_ir': 'prompt_compiler.resolved_prompt_ir', 'validation_report': 'consistency_validator.validation_report', 'clarification_request': 'scene_document_processor.clarification_request', 'clarification_options': 'scene_document_processor.clarification_options'}),
         ),
     )
-    workflow.add_edge("scene_document_editor", "scene_document_processor")
-    workflow.add_edge("character_identity_resolver", "visual_impact_router")
-    workflow.add_edge("visual_semantic_resolver", "prompt_compiler")
-    workflow.add_edge("prompt_compiler", "consistency_validator")
-    workflow.add_edge("semantic_repairer", "prompt_compiler")
-    workflow.add_edge("target_renderer", END)
+    workflow.add_edge("scene_document_editor", "supervisor")
+    workflow.add_edge("scene_document_processor", "supervisor")
+    workflow.add_edge("identity_impact_router", "supervisor")
+    workflow.add_edge("character_identity_resolver", "supervisor")
+    workflow.add_edge("visual_impact_router", "supervisor")
+    workflow.add_edge("visual_semantic_resolver", "supervisor")
+    workflow.add_edge("prompt_compiler", "supervisor")
+    workflow.add_edge("consistency_validator", "supervisor")
+    workflow.add_edge("semantic_repairer", "supervisor")
+    workflow.add_edge("target_renderer", "supervisor")
     workflow.add_conditional_edges(
-        'scene_document_processor',
-        create_state_condition_router(
-            path='nodes.scene_document_processor.document_valid',
-            operator='equals',
-            expected=True,
-            source='scene_document_processor',
-            then_target='identity_impact_router',
-            otherwise_target='target_renderer',
-            exhausted_target='target_renderer',
-        ),
+        'supervisor',
+        lambda state: state['nodes']['supervisor']['next_node'],
         {
-            "then": 'identity_impact_router',
-            "otherwise": 'target_renderer',
-            "exhausted": 'target_renderer',
+            'scene_document_editor': 'scene_document_editor',
+            'scene_document_processor': 'scene_document_processor',
+            'identity_impact_router': 'identity_impact_router',
+            'character_identity_resolver': 'character_identity_resolver',
+            'visual_impact_router': 'visual_impact_router',
+            'visual_semantic_resolver': 'visual_semantic_resolver',
+            'prompt_compiler': 'prompt_compiler',
+            'consistency_validator': 'consistency_validator',
+            'semantic_repairer': 'semantic_repairer',
+            'target_renderer': 'target_renderer',
+            'END': END,
         },
     )
-    workflow.add_conditional_edges(
-        'identity_impact_router',
-        create_state_condition_router(
-            path='nodes.identity_impact_router.should_resolve_identity',
-            operator='equals',
-            expected=True,
-            source='identity_impact_router',
-            then_target='character_identity_resolver',
-            otherwise_target='visual_impact_router',
-            exhausted_target='visual_impact_router',
-        ),
-        {
-            "then": 'character_identity_resolver',
-            "otherwise": 'visual_impact_router',
-            "exhausted": 'visual_impact_router',
-        },
-    )
-    workflow.add_conditional_edges(
-        'visual_impact_router',
-        create_state_condition_router(
-            path='nodes.visual_impact_router.should_resolve_visual',
-            operator='equals',
-            expected=True,
-            source='visual_impact_router',
-            then_target='visual_semantic_resolver',
-            otherwise_target='prompt_compiler',
-            exhausted_target='prompt_compiler',
-        ),
-        {
-            "then": 'visual_semantic_resolver',
-            "otherwise": 'prompt_compiler',
-            "exhausted": 'prompt_compiler',
-        },
-    )
-    workflow.add_conditional_edges(
-        'consistency_validator',
-        create_state_condition_router(
-            path='nodes.consistency_validator.needs_repair',
-            operator='equals',
-            expected=True,
-            counter_path='nodes.semantic_repairer.repair_attempts',
-            max_iterations=1,
-            source='consistency_validator',
-            then_target='semantic_repairer',
-            otherwise_target='target_renderer',
-            exhausted_target='target_renderer',
-        ),
-        {
-            "then": 'semantic_repairer',
-            "otherwise": 'target_renderer',
-            "exhausted": 'target_renderer',
-        },
-    )
-    workflow.set_entry_point("scene_document_editor")
+    workflow.set_entry_point("supervisor")
     return workflow.compile(checkpointer=get_checkpointer(), store=get_store())
 
 

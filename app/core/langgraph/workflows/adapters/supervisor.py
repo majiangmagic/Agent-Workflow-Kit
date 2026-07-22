@@ -105,6 +105,20 @@ def build_workflow_agents(
             if agent_name != supervisor_node
         }
 
+    runtime_fields = {
+        "agent_id",
+        "agent_name",
+        "description",
+        "system_prompt",
+        "model",
+        "temperature",
+        "messages",
+        "user_input",
+        "workflow_inputs",
+        "status",
+        "error",
+        "tools",
+    }
     return {
         node_name: {
             "agent_id": node_state.get("agent_id", node_name),
@@ -115,7 +129,11 @@ def build_workflow_agents(
             "temperature": node_state.get("temperature", 0.2),
             "messages": [],
             "status": node_state.get("status", "idle"),
-            "results": node_state.get("results"),
+            "results": {
+                key: value
+                for key, value in node_state.items()
+                if key not in runtime_fields and value is not None
+            },
             "error": node_state.get("error"),
             "tools": node_state.get("tools", []),
         }
@@ -129,13 +147,11 @@ def create_supervisor_extension(node_name: str) -> AgentNodeExtension:
     async def prepare_supervisor_state(state: Dict[str, Any]) -> SupervisorState:
         """Prepare supervisor state before running the agent graph."""
         supervisor_state = state["nodes"][node_name]
-        agents = supervisor_state.get("agents")
-        if not agents:
-            agents = build_workflow_agents(
-                state["nodes"],
-                node_name,
-                state.get("agents"),
-            )
+        agents = build_workflow_agents(
+            state["nodes"],
+            node_name,
+            state.get("agents"),
+        )
         memories = await load_supervisor_memories(state)
         return {
             **supervisor_state,

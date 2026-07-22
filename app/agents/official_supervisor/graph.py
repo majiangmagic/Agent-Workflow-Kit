@@ -5,6 +5,9 @@ from app.agents.official_supervisor.spec import (
     AGENT_DEFINITION,
     OFFICIAL_SUPERVISOR_AGENT_NAME,
 )
+from app.agents.official_supervisor.workflow_graph import (
+    create_workflow_supervisor_graph,
+)
 from app.agents.registry import agent_registry
 
 

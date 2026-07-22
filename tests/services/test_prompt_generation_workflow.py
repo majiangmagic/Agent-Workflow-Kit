@@ -6,7 +6,9 @@ import json
 import uuid
 
 import pytest
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 
 from app.agents.catalog import resolve_workflow_agent_configs
 from app.agents.prompt_generation.domain import (
@@ -39,7 +41,12 @@ from app.agents.prompt_generation.visual_semantic_resolver.nodes import (
     _parse_visual_decisions,
     resolve_visual_semantics_node,
 )
-from app.api.routes.conversation import extract_workflow_memory, extract_workflow_result
+from app.api.routes.conversation import (
+    extract_workflow_interrupt,
+    extract_workflow_memory,
+    extract_workflow_outcome,
+    extract_workflow_result,
+)
 from app.core.langgraph.workflows.prompt_generation_workflow.graph import (
     WORKFLOW_METADATA,
     create_prompt_generation_workflow_graph,
@@ -873,12 +880,64 @@ async def test_identity_adjudicator_retries_unverified_character_tag(monkeypatch
     assert result["identity_tag_adjudication"]["triggered"] is True
 
 
-class WorkflowModel:
+class WorkflowModel(BaseChatModel):
     """Deterministic structured responses for two workflow turns."""
 
-    async def ainvoke(self, messages):
+    bound_tools: list[str] = []
+
+    @property
+    def _llm_type(self) -> str:
+        return "prompt-workflow-test"
+
+    def bind_tools(self, tools, **kwargs):
+        self.bound_tools = [tool.name for tool in tools]
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        return ChatResult(
+            generations=[ChatGeneration(message=self._response(messages))]
+        )
+
+    def _response(self, messages):
         system = str(messages[0].content)
         payload = str(messages[-1].content)
+        if "You supervise an explicit LangGraph workflow" in system:
+            marker = "Current control state:\n"
+            control = json.loads(system.rsplit(marker, 1)[1].strip())
+            runs = control.get("worker_runs") or {}
+            order = [
+                "scene_document_editor",
+                "scene_document_processor",
+                "identity_impact_router",
+                "character_identity_resolver",
+                "visual_impact_router",
+                "visual_semantic_resolver",
+                "prompt_compiler",
+                "consistency_validator",
+                "target_renderer",
+            ]
+            target = next((name for name in order if not runs.get(name)), None)
+            if target:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": f"route_to_{target}",
+                            "args": {},
+                            "id": f"delegate-{target}",
+                        }
+                    ],
+                )
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "finish_workflow",
+                        "args": {},
+                        "id": "finish-workflow",
+                    }
+                ],
+            )
         if "base_version" in system and "SceneDocument" in system:
             if "replace character" in payload:
                 content = {
@@ -1026,6 +1085,27 @@ def test_extract_workflow_memory_prefers_scene_document_contract():
 
     assert memory["scene_document"]["version"] == 3
     assert memory["resolved_prompt_ir"]["document_version"] == 3
+
+
+def test_extract_workflow_outcome_exposes_resumable_interrupt():
+    class Paused:
+        id = "interrupt-1"
+        value = {
+            "kind": "workflow.clarification",
+            "question": "镜头从哪个方向拍摄？",
+            "options": ["正面", "侧面"],
+            "context": "构图信息不足",
+        }
+
+    state = {"nodes": {}, "__interrupt__": [Paused()]}
+    interrupted = extract_workflow_interrupt(state)
+    content, memory, result = extract_workflow_outcome(state)
+
+    assert interrupted["id"] == "interrupt-1"
+    assert content == "需要确认：镜头从哪个方向拍摄？"
+    assert memory == {}
+    assert result["resumable"] is True
+    assert result["clarification_request"]["options"] == ["正面", "侧面"]
 
 
 def test_extract_workflow_memory_preserves_previous_ir_on_clarification_path():

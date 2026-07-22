@@ -1,9 +1,13 @@
 """State and action types owned by the official supervisor agent."""
 
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, TypedDict
+from typing import Annotated, Any, Dict, List, Literal, Optional, TypedDict
+
+from langgraph.managed import RemainingSteps
+from typing_extensions import NotRequired
 
 from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
 
 
 class SupervisorAction(str, Enum):
@@ -42,9 +46,12 @@ class SupervisorState(TypedDict):
     model: Optional[str]
     temperature: float
     tools: List[Dict[str, Any]]
-    messages: List[BaseMessage]
+    messages: Annotated[List[BaseMessage], add_messages]
     user_input: Optional[str]
     workflow_inputs: Dict[str, Any]
     plan: Optional[Dict[str, Any]]
     action: Optional[SupervisorAction]
     agents: Dict[str, DelegatedAgentState]
+    next_node: NotRequired[str]
+    long_term_memories: NotRequired[List[Dict[str, Any]]]
+    remaining_steps: NotRequired[RemainingSteps]

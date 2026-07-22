@@ -337,3 +337,99 @@ def test_generate_workflow_supports_explicit_pipeline_inputs(tmp_path, monkeypat
     )
     assert "inputs={'scene_document': 'source.scene_document', 'impact_set': 'source.impact_set'}" in graph_text
     assert "'inputs': {'scene_document': 'source.scene_document'" in graph_text
+
+
+def test_generate_workflow_supports_supervisor_conditional_routes(
+    tmp_path, monkeypatch
+):
+    workflows_dir = tmp_path / "workflows"
+    monkeypatch.setattr(generate_workflow, "WORKFLOWS_DIR", workflows_dir)
+    dsl_path = tmp_path / "supervised.json"
+    dsl_path.write_text(
+        json.dumps(
+            {
+                "kind": "workflow",
+                "name": "supervised_pipeline",
+                "entrypoint": "supervisor",
+                "nodes": {
+                    "supervisor": {
+                        "agent": "official_supervisor",
+                        "extension": "supervisor",
+                        "config": {
+                            "prompt": "Run the declared pipeline.",
+                            "max_retries_per_node": 1,
+                        },
+                    },
+                    "editor": {
+                        "agent": "editor_agent",
+                        "extension": "pipeline_context",
+                    },
+                    "renderer": {
+                        "agent": "renderer_agent",
+                        "extension": "pipeline_context",
+                        "inputs": {"document": "editor.document"},
+                    },
+                },
+                "edges": [
+                    {
+                        "from": "supervisor",
+                        "to": "editor",
+                        "condition": {
+                            "path": "nodes.supervisor.next_node",
+                            "operator": "equals",
+                            "value": "editor",
+                        },
+                    },
+                    {"from": "editor", "to": "supervisor"},
+                    {
+                        "from": "supervisor",
+                        "to": "renderer",
+                        "condition": {
+                            "path": "nodes.supervisor.next_node",
+                            "operator": "equals",
+                            "value": "renderer",
+                        },
+                    },
+                    {"from": "renderer", "to": "supervisor"},
+                    {
+                        "from": "supervisor",
+                        "to": "END",
+                        "condition": {
+                            "path": "nodes.supervisor.next_node",
+                            "operator": "equals",
+                            "value": "END",
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert generate_workflow.main([str(dsl_path)]) == 0
+    graph_text = (workflows_dir / "supervised_pipeline" / "graph.py").read_text(
+        encoding="utf-8"
+    )
+    assert "from langgraph.graph import END, StateGraph" in graph_text
+    assert "create_workflow_supervisor_graph" in graph_text
+    assert "create_react_agent" not in graph_text
+    assert "create_handoff_tool" not in graph_text
+    assert "handoff_tools" not in graph_text
+    assert "workflow = StateGraph(SupervisedPipelineState)" in graph_text
+    assert "workflow.add_node(" in graph_text
+    assert 'workflow.add_edge("editor", "supervisor")' in graph_text
+    assert 'workflow.add_edge("renderer", "supervisor")' in graph_text
+    assert "workflow.add_conditional_edges(" in graph_text
+    assert "lambda state: state['nodes']['supervisor']['next_node']" in graph_text
+    assert "'editor': 'editor'" in graph_text
+    assert "'renderer': 'renderer'" in graph_text
+    assert "'END': END" in graph_text
+    assert "workflow = create_supervisor(" not in graph_text
+    assert "create_supervised_workflow(" not in graph_text
+    assert "SupervisedWorkerSpec(" not in graph_text
+    assert "create_supervised_worker_graph(" not in graph_text
+    assert "create_agent_node(" in graph_text
+    assert "node_name='supervisor'" in graph_text
+    assert "supervisor_worker" not in graph_text
+    assert "create_official_supervisor_graph()" not in graph_text
+    assert "orchestration" not in graph_text

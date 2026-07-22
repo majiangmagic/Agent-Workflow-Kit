@@ -23,7 +23,12 @@ export function useWorkflowStream() {
   const cancel = useCallback(() => controllerRef.current?.abort(), []);
 
   const run = useCallback(
-    async (conversationId: string, message: string, inputs: WorkflowInputs) => {
+    async (
+      conversationId: string,
+      message: string,
+      inputs: WorkflowInputs,
+      resume = false,
+    ) => {
       controllerRef.current?.abort();
       const controller = new AbortController();
       controllerRef.current = controller;
@@ -76,6 +81,7 @@ export function useWorkflowStream() {
             setNodeStatuses((current) => ({ ...current, [node]: status }));
           },
           controller.signal,
+          resume,
         );
       } finally {
         if (controllerRef.current === controller) {

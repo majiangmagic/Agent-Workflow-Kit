@@ -104,6 +104,7 @@ class ChatRequest(BaseModel):
     message: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
     workflow_inputs: Dict[str, Any] = Field(default_factory=dict)
+    resume: bool = False
 
 
 class ChatResponse(BaseModel):

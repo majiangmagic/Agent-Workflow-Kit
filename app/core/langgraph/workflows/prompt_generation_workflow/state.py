@@ -14,6 +14,7 @@ PromptGenerationWorkflowState = WorkflowState
 
 WORKFLOW_NAME = "prompt_generation_workflow"
 NODE_AGENTS = {
+    "supervisor": "official_supervisor",
     "scene_document_editor": "scene_document_editor",
     "scene_document_processor": "scene_document_processor",
     "identity_impact_router": "prompt_impact_router",

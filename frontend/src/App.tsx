@@ -13,6 +13,7 @@ import { MessageList } from "./components/MessageList";
 import { Pipeline } from "./components/Pipeline";
 import { Sidebar } from "./components/Sidebar";
 import { WorkflowControls } from "./components/WorkflowControls";
+import { WorkflowInterruptDialog } from "./components/WorkflowInterruptDialog";
 import { useWorkflowStream } from "./hooks/useWorkflowStream";
 import type {
   Conversation,
@@ -21,6 +22,8 @@ import type {
   Workflow,
   WorkflowControl,
   WorkflowInputs,
+  WorkflowInterrupt,
+  WorkflowResultMetadata,
 } from "./types";
 
 type Confirmation = {
@@ -74,6 +77,7 @@ export default function App() {
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [view, setView] = useState<"runtime" | "designer">("runtime");
+  const [dismissedInterrupt, setDismissedInterrupt] = useState("");
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const stream = useWorkflowStream();
 
@@ -82,6 +86,17 @@ export default function App() {
   const controls = useMemo(() => controlsFor(selectedWorkflow), [selectedWorkflow]);
   const currentConversation = conversations.find((item) => item.id === conversationId);
   const busy = loading || stream.running;
+  const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
+  const latestWorkflowResult = latestAssistant?.metadata?.workflow_result as WorkflowResultMetadata | undefined;
+  const pendingInterrupt: WorkflowInterrupt | null = latestWorkflowResult?.resumable
+    ? latestWorkflowResult.interrupt ?? latestWorkflowResult.clarification_request ?? null
+    : null;
+  const interruptKey = pendingInterrupt
+    ? pendingInterrupt.id || pendingInterrupt.question
+    : "";
+  const visibleInterrupt = pendingInterrupt && interruptKey !== dismissedInterrupt
+    ? pendingInterrupt as WorkflowInterrupt
+    : null;
 
   const reportError = useCallback((reason: unknown) => {
     setError(reason instanceof Error ? reason.message : String(reason));
@@ -141,6 +156,7 @@ export default function App() {
     setDraft("");
     stream.clear();
     setSidebarOpen(false);
+    setDismissedInterrupt("");
   }
 
   function changeCrew(value: string) {
@@ -181,6 +197,7 @@ export default function App() {
         setWorkflowInputs(initialInputs(controls, latestInputs as WorkflowInputs));
       }
       stream.clear();
+      setDismissedInterrupt("");
       setSidebarOpen(false);
     } catch (reason) {
       reportError(reason);
@@ -279,6 +296,11 @@ export default function App() {
   async function sendMessage(messageOverride?: string) {
     const message = (messageOverride ?? draft).trim();
     if (!message || !selectedCrew || !selectedWorkflow || stream.running) return;
+    if (pendingInterrupt && conversationId) {
+      setDraft("");
+      await resumeWorkflow(message);
+      return;
+    }
     setError("");
     setDraft("");
     let targetConversationId = conversationId;
@@ -323,7 +345,42 @@ export default function App() {
     }
   }
 
+  async function resumeWorkflow(response: string) {
+    const answer = response.trim();
+    if (!answer || !conversationId || stream.running) return;
+    setError("");
+    setDismissedInterrupt(interruptKey);
+    const optimisticUser: Message = {
+      id: `local-${crypto.randomUUID()}`,
+      conversation_id: conversationId,
+      role: "user",
+      content: answer,
+      status: "completed",
+      metadata: { workflow_resume: true },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    setMessages((current) => [...current, optimisticUser]);
+    try {
+      await stream.run(conversationId, answer, workflowInputs, true);
+      const [history] = await Promise.all([
+        api.messages(conversationId),
+        loadConversations(),
+      ]);
+      setMessages(history);
+      setDismissedInterrupt("");
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === "AbortError") return;
+      setDismissedInterrupt("");
+      reportError(reason);
+    }
+  }
+
   function explainClarification() {
+    if (pendingInterrupt) {
+      setDismissedInterrupt("");
+      return;
+    }
     setDraft("补充说明，其他画面内容保持不变：");
     window.setTimeout(() => composerRef.current?.focus(), 0);
   }
@@ -401,7 +458,9 @@ export default function App() {
         <MessageList
           messages={messages}
           onClarificationExplain={explainClarification}
-          onClarificationReply={(reply) => void sendMessage(reply)}
+          onClarificationReply={(reply) => pendingInterrupt
+            ? void resumeWorkflow(reply)
+            : void sendMessage(reply)}
           onClarificationRetry={retryClarification}
           onDeleteLatestTurn={confirmDeleteLatestTurn}
           onRewind={confirmRewind}
@@ -441,6 +500,12 @@ export default function App() {
         onConfirm={() => void executeConfirmation()}
         open={Boolean(confirmation)}
         title={confirmation?.title ?? "确认操作"}
+      />
+      <WorkflowInterruptDialog
+        busy={stream.running}
+        interrupt={visibleInterrupt}
+        onClose={() => setDismissedInterrupt(interruptKey)}
+        onSubmit={(response) => void resumeWorkflow(response)}
       />
     </main>
   );

@@ -118,9 +118,23 @@ function toFlow(data: DslData): { nodes: Node<FlowNodeData>[]; edges: Edge[] } {
 
 function graphIntoDsl(data: DslData, nodes: Node<FlowNodeData>[], edges: Edge[]): DslData {
   const nodeMap = Object.fromEntries(nodes.map((node) => [node.id, node.data.config]));
-  const originalEndEdges = (data.edges ?? []).filter((edge) => edge.to === "END");
+  const originalEndEdges = (data.edges ?? []).filter(
+    (edge) => edge.to === "END" && !edge.condition,
+  );
   const preservedConditionalEdges = (data.edges ?? []).filter((edge, groupIndex) => {
-    if (!edge.condition || !edge.otherwise) return false;
+    if (!edge.condition) return false;
+    if (!edge.otherwise) {
+      const sources = Array.isArray(edge.from) ? edge.from : [edge.from];
+      const targets = Array.isArray(edge.to) ? edge.to : [edge.to];
+      if (!sources.every((source) => nodeMap[source])) return false;
+      if (!targets.every((target) => target === "END" || nodeMap[target])) return false;
+      if (targets.includes("END")) return true;
+      return edges.some(
+        (candidate) => candidate.data?.group === groupIndex
+          && sources.includes(candidate.source)
+          && targets.includes(candidate.target),
+      );
+    }
     const expectedTargets = new Set([
       ...(Array.isArray(edge.to) ? edge.to : [edge.to]),
       edge.otherwise,

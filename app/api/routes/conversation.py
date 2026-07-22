@@ -8,6 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 
@@ -178,6 +179,59 @@ def extract_workflow_result(final_state: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
+def extract_workflow_interrupt(final_state: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the first structured LangGraph interrupt, when execution paused."""
+
+    interrupts = final_state.get("__interrupt__") or []
+    if not interrupts:
+        return {}
+    current = interrupts[0]
+    value = getattr(current, "value", current)
+    payload = dict(value) if isinstance(value, dict) else {"question": str(value)}
+    question = str(payload.get("question") or "请补充继续执行所需的信息。").strip()
+    options = [
+        str(option)
+        for option in payload.get("options") or []
+        if str(option).strip()
+    ][:4]
+    return {
+        "id": str(getattr(current, "id", "")),
+        "kind": str(payload.get("kind") or "workflow.clarification"),
+        "question": question,
+        "options": options,
+        "context": str(payload.get("context") or ""),
+    }
+
+
+def extract_workflow_outcome(
+    final_state: Dict[str, Any],
+) -> tuple[str, Dict[str, Any], Dict[str, Any]]:
+    """Extract response text, durable workflow memory, and UI result metadata."""
+
+    workflow_memory = extract_workflow_memory(final_state)
+    interrupted = extract_workflow_interrupt(final_state)
+    if interrupted:
+        question = interrupted["question"]
+        return (
+            f"需要确认：{question}",
+            workflow_memory,
+            {
+                "status": "needs_clarification",
+                "resumable": True,
+                "interrupt": interrupted,
+                "clarification_request": {
+                    "question": question,
+                    "options": interrupted["options"],
+                },
+            },
+        )
+    return (
+        extract_workflow_response(final_state),
+        workflow_memory,
+        extract_workflow_result(final_state),
+    )
+
+
 def get_supervisor_state(final_state: Dict[str, Any]) -> Dict[str, Any]:
     """Read supervisor state from the current or legacy workflow shape."""
 
@@ -255,6 +309,99 @@ async def build_workflow_for_conversation(
     return workflow, initial_state, runtime_agent
 
 
+async def build_workflow_for_resume(db: AsyncSession, conversation):
+    """Recreate the local graph while preserving its checkpointed pause state."""
+
+    recent = await ConversationService.get_recent_messages(
+        db, conversation.id, limit=1
+    )
+    pending_result = (
+        (recent[-1].meta_data or {}).get("workflow_result")
+        if recent and recent[-1].role == MessageRole.ASSISTANT
+        else {}
+    ) or {}
+    if not pending_result.get("resumable"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This conversation has no interrupted workflow to resume",
+        )
+
+    crew = await CrewService.get_crew(db, conversation.crew_id)
+    if not crew:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Crew with ID {conversation.crew_id} not found",
+        )
+    try:
+        workflow = WorkflowService.create_workflow(crew)
+        local_agents = WorkflowService.local_agent_configs(crew)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    metadata = workflow_registry.get_metadata(
+        WorkflowService.get_workflow_type(crew), fallback=False
+    )
+    entrypoint = str(metadata.get("entrypoint") or "")
+    runtime_agent = next(
+        (
+            agent
+            for agent in local_agents
+            if str(agent.get("id") or "").endswith(f":{entrypoint}")
+        ),
+        local_agents[0] if local_agents else {},
+    )
+    return workflow, runtime_agent
+
+
+async def run_resume_turn(
+    db: AsyncSession,
+    conversation,
+    response: Any,
+) -> ChatResponse:
+    """Persist a human answer and resume the same LangGraph checkpoint."""
+
+    workflow, runtime_agent = await build_workflow_for_resume(db, conversation)
+    user_message = await ConversationService.add_message(
+        db=db,
+        conversation_id=conversation.id,
+        role=MessageRole.USER,
+        content=str(response),
+        status=MessageStatus.COMPLETED,
+        metadata={"workflow_resume": True},
+    )
+    final_state = await workflow.ainvoke(
+        Command(resume=response),
+        config={"configurable": {"thread_id": str(conversation.id)}},
+    )
+    response_content, workflow_memory, workflow_result = extract_workflow_outcome(
+        final_state
+    )
+    assistant_message = await ConversationService.add_message(
+        db=db,
+        conversation_id=conversation.id,
+        role=MessageRole.ASSISTANT,
+        content=response_content,
+        parent_id=user_message.id,
+        status=MessageStatus.COMPLETED,
+        metadata={
+            **({"workflow_memory": workflow_memory} if workflow_memory else {}),
+            **({"workflow_result": workflow_result} if workflow_result else {}),
+            "agent_name": runtime_agent.get("agent_name"),
+        },
+    )
+    await ActivityLogService.log_activity(
+        db=db,
+        agent_name=runtime_agent.get("agent_name"),
+        activity_type=ActivityType.AGENT_MESSAGE,
+        description=f"Workflow resumed in conversation {conversation.id}",
+        conversation_id=conversation.id,
+        message_id=assistant_message.id,
+    )
+    return ChatResponse(message_id=assistant_message.id, content=response_content)
+
+
 async def run_chat_turn(
     db: AsyncSession,
     conversation,
@@ -281,9 +428,9 @@ async def run_chat_turn(
             initial_state,
             config={"configurable": {"thread_id": str(conversation.id)}},
         )
-        response_content = extract_workflow_response(final_state)
-        workflow_memory = extract_workflow_memory(final_state)
-        workflow_result = extract_workflow_result(final_state)
+        response_content, workflow_memory, workflow_result = (
+            extract_workflow_outcome(final_state)
+        )
     except Exception as e:
         print(f"Error running supervisor workflow: {str(e)}")
         response_content = (
@@ -594,6 +741,8 @@ async def chat(
             detail=f"Conversation with ID {conversation_id} not found"
         )
 
+    if chat_request.resume:
+        return await run_resume_turn(db, conversation, chat_request.message)
     return await run_chat_turn(
         db, conversation, chat_request.message, chat_request.workflow_inputs
     )
@@ -632,21 +781,36 @@ async def chat_stream(
             detail=f"Conversation with ID {conversation_id} not found"
         )
     
-    # Add user message to conversation
+    resume_runtime = None
+    if chat_request.resume:
+        resume_runtime = await build_workflow_for_resume(db, conversation)
+
+    # Persist both ordinary turns and human-in-the-loop resume answers.
     user_message = await ConversationService.add_message(
         db=db,
         conversation_id=conversation_id,
         role=MessageRole.USER,
         content=chat_request.message,
         status=MessageStatus.COMPLETED,
-        metadata={"workflow_inputs": chat_request.workflow_inputs}
-        if chat_request.workflow_inputs
-        else {},
+        metadata={
+            **(
+                {"workflow_inputs": chat_request.workflow_inputs}
+                if chat_request.workflow_inputs
+                else {}
+            ),
+            **({"workflow_resume": True} if chat_request.resume else {}),
+        },
     )
 
-    workflow, initial_state, runtime_agent = await build_workflow_for_conversation(
-        db, conversation, user_message, chat_request.workflow_inputs
-    )
+    if chat_request.resume:
+        assert resume_runtime is not None
+        workflow, runtime_agent = resume_runtime
+        workflow_input: Any = Command(resume=chat_request.message)
+    else:
+        workflow, initial_state, runtime_agent = await build_workflow_for_conversation(
+            db, conversation, user_message, chat_request.workflow_inputs
+        )
+        workflow_input = initial_state
     
     # Create a placeholder for assistant message
     assistant_message = await ConversationService.add_message(
@@ -678,7 +842,7 @@ async def chat_stream(
                     }
                 )
                 final = await workflow.ainvoke(
-                    initial_state,
+                    workflow_input,
                     config={"configurable": {"thread_id": str(conversation_id)}},
                 )
                 sink.emit(
@@ -716,9 +880,9 @@ async def chat_stream(
 
             final_state = await workflow_task
 
-            content_so_far = extract_workflow_response(final_state)
-            workflow_memory = extract_workflow_memory(final_state)
-            workflow_result = extract_workflow_result(final_state)
+            content_so_far, workflow_memory, workflow_result = (
+                extract_workflow_outcome(final_state)
+            )
 
             data = {
                 "id": message_id,

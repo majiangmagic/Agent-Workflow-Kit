@@ -52,7 +52,7 @@ class WorkflowLoopGuardDsl:
 class WorkflowConditionalEdgeDsl:
     source: str
     target: str
-    otherwise: str
+    otherwise: Optional[str]
     condition: WorkflowConditionDsl
     loop: Optional[WorkflowLoopGuardDsl]
 
@@ -235,13 +235,22 @@ def parse_edges(
                 raise ValueError(
                     f"unsupported conditional edge operator '{operator}'"
                 )
-            if "to" not in raw_edge or "otherwise" not in raw_edge:
+            if "to" not in raw_edge:
+                raise ValueError("conditional edge requires 'to'")
+            otherwise = (
+                parse_target(raw_edge["otherwise"])
+                if "otherwise" in raw_edge
+                else None
+            )
+            if otherwise is None and operator != "equals":
                 raise ValueError(
-                    "conditional edge requires both 'to' and 'otherwise'"
+                    "multi-route conditional edges must use the equals operator"
                 )
             loop = None
             raw_loop = raw_edge.get("loop")
             if raw_loop is not None:
+                if otherwise is None:
+                    raise ValueError("a guarded loop requires 'otherwise'")
                 if not isinstance(raw_loop, dict):
                     raise ValueError("conditional edge loop must be a map")
                 counter_path = str(raw_loop.get("counter_path") or "").strip()
@@ -262,7 +271,7 @@ def parse_edges(
                 WorkflowConditionalEdgeDsl(
                     source=snake_case(str(raw_source)),
                     target=parse_target(raw_edge["to"]),
-                    otherwise=parse_target(raw_edge["otherwise"]),
+                    otherwise=otherwise,
                     condition=WorkflowConditionDsl(
                         path=path,
                         operator=operator,
@@ -429,15 +438,53 @@ __all__ = [
 
 def render_graph(workflow: WorkflowDsl) -> str:
     factory_name = f"create_{workflow.name}_graph"
-    agent_imports = render_agent_imports(workflow)
+    route_edges = [
+        edge for edge in workflow.conditional_edges if edge.otherwise is None
+    ]
+    binary_edges = [
+        edge for edge in workflow.conditional_edges if edge.otherwise is not None
+    ]
+    route_groups: Dict[tuple[str, str], List[WorkflowConditionalEdgeDsl]] = {}
+    for edge in route_edges:
+        route_groups.setdefault((edge.source, edge.condition.path), []).append(edge)
+    route_sources = {source for source, _ in route_groups}
+    if len(route_sources) != len(route_groups):
+        raise ValueError(
+            "one conditional routing path is allowed per source node"
+        )
+    supervisor_nodes = {
+        node.name
+        for node in workflow.nodes
+        if node.name in route_sources and node.agent == "official_supervisor"
+    }
+    imported_nodes = [
+        node for node in workflow.nodes if node.name not in supervisor_nodes
+    ]
+    agent_imports = render_agent_imports(workflow, nodes=imported_nodes)
     extension_import_text, extension_by_node = extension_imports(workflow)
-    node_calls = "\n".join(render_node_call(node, extension_by_node) for node in workflow.nodes)
+    node_calls = "\n".join(
+        render_supervisor_node_call(
+            node,
+            extension_by_node,
+            [
+                edge.target
+                for (source, _), edges in route_groups.items()
+                if source == node.name
+                for edge in edges
+                if edge.target != "END"
+            ],
+        )
+        if node.name in supervisor_nodes
+        else render_node_call(node, extension_by_node)
+        for node in workflow.nodes
+    )
     edge_calls = "\n".join(
         [
             *(render_edge_call(edge) for edge in workflow.edges),
+            *(render_conditional_edge_call(edge) for edge in binary_edges),
             *(
-                render_conditional_edge_call(edge)
-                for edge in workflow.conditional_edges
+                render_route_group_call(source, path, edges)
+                for (source, path), edges in route_groups.items()
             ),
         ]
     )
@@ -447,9 +494,15 @@ def render_graph(workflow: WorkflowDsl) -> str:
             "from langgraph.graph import END, StateGraph",
             extension_import_text,
             (
+                "from app.agents.official_supervisor.graph "
+                "import create_workflow_supervisor_graph"
+                if supervisor_nodes
+                else ""
+            ),
+            (
                 "from app.core.langgraph.workflows.adapters.routing "
                 "import create_state_condition_router"
-                if workflow.conditional_edges
+                if binary_edges
                 else ""
             ),
             "from app.core.langgraph.checkpoint import get_checkpointer",
@@ -524,12 +577,12 @@ def render_workflow_metadata(workflow: WorkflowDsl) -> str:
         ] + [
             branch
             for edge in workflow.conditional_edges
-            for branch in (
+            for branch in [
                 {
                     "from": edge.source,
                     "to": edge.target,
                     "conditional": True,
-                    "branch": "then",
+                    **({"branch": "then"} if edge.otherwise else {}),
                     "condition": {
                         "path": edge.condition.path,
                         "operator": edge.condition.operator,
@@ -547,13 +600,19 @@ def render_workflow_metadata(workflow: WorkflowDsl) -> str:
                         else {}
                     ),
                 },
-                {
-                    "from": edge.source,
-                    "to": edge.otherwise,
-                    "conditional": True,
-                    "branch": "otherwise",
-                },
-            )
+                *(
+                    [
+                        {
+                            "from": edge.source,
+                            "to": edge.otherwise,
+                            "conditional": True,
+                            "branch": "otherwise",
+                        }
+                    ]
+                    if edge.otherwise
+                    else []
+                ),
+            ]
         ],
         "ui": workflow.ui,
     }
@@ -581,6 +640,7 @@ def render_target(target: str) -> str:
 def render_conditional_edge_call(edge: WorkflowConditionalEdgeDsl) -> str:
     """Render a state-path conditional edge with an optional loop guard."""
 
+    assert edge.otherwise is not None
     loop_args = ""
     exhausted = edge.otherwise
     if edge.loop:
@@ -604,6 +664,37 @@ def render_conditional_edge_call(edge: WorkflowConditionalEdgeDsl) -> str:
             "then": {render_target(edge.target)},
             "otherwise": {render_target(edge.otherwise)},
             "exhausted": {render_target(exhausted)},
+        }},
+    )'''
+
+
+def render_route_group_call(
+    source: str,
+    path: str,
+    edges: List[WorkflowConditionalEdgeDsl],
+) -> str:
+    """Render a native multi-destination conditional edge."""
+
+    routes: Dict[Any, str] = {}
+    for edge in edges:
+        expected = edge.condition.value
+        if expected in routes:
+            raise ValueError(
+                f"duplicate route value {expected!r} for node '{source}'"
+            )
+        routes[expected] = edge.target
+    path_expression = "state" + "".join(
+        f"[{segment!r}]" for segment in path.split(".")
+    )
+    route_map = "\n".join(
+        f"            {expected!r}: {render_target(target)},"
+        for expected, target in routes.items()
+    )
+    return f'''    workflow.add_conditional_edges(
+        {source!r},
+        lambda state: {path_expression},
+        {{
+{route_map}
         }},
     )'''
 
@@ -640,7 +731,11 @@ def extension_imports(workflow: WorkflowDsl) -> tuple[str, Dict[str, str]]:
     return "\n".join(sorted(set(imports))), mapping
 
 
-def render_agent_imports(workflow: WorkflowDsl) -> str:
+def render_agent_imports(
+    workflow: WorkflowDsl,
+    *,
+    nodes: Optional[List[WorkflowNodeDsl]] = None,
+) -> str:
     """Render graph factory imports for all agent packages used by a workflow."""
 
     imports = {
@@ -648,7 +743,7 @@ def render_agent_imports(workflow: WorkflowDsl) -> str:
             f"from {agent_import_path(node)}.graph "
             f"import create_graph as {agent_graph_factory_alias(node)}"
         )
-        for node in workflow.nodes
+        for node in (workflow.nodes if nodes is None else nodes)
     }
     return "\n".join(imports[key] for key in sorted(imports))
 
@@ -679,6 +774,34 @@ def render_node_call(
         create_agent_node(
             "{node.name}",
             {agent_graph_factory_alias(node)}(),{extension}{error_policy}
+        ),
+    )'''
+
+
+def render_supervisor_node_call(
+    node: WorkflowNodeDsl,
+    extension_by_node: Dict[str, str],
+    worker_names: List[str],
+) -> str:
+    """Render a Supervisor as an ordinary Agent node with routed output."""
+
+    extension_factory = extension_by_node.get(node.name)
+    if extension_factory != "create_supervisor_extension":
+        raise ValueError(
+            f"routed official supervisor '{node.name}' must use extension 'supervisor'"
+        )
+    max_retries = int(node.config.get("max_retries_per_node") or 2)
+    return f'''    workflow.add_node(
+        {node.name!r},
+        create_agent_node(
+            {node.name!r},
+            create_workflow_supervisor_graph(
+                node_name={node.name!r},
+                agents=agents,
+                worker_names={worker_names!r},
+                max_retries_per_node={max_retries},
+            ),
+            extension=create_supervisor_extension({node.name!r}),
         ),
     )'''
 
