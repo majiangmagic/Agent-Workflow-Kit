@@ -283,6 +283,30 @@ AGENT_CONFIGS = json.loads((ROOT / "agent_configs.json").read_text(encoding="utf
 WORKFLOW_METADATA = json.loads((ROOT / "workflow.json").read_text(encoding="utf-8"))
 
 
+def workflow_controls() -> list[dict[str, Any]]:
+    """Return the controls declared by this workflow's UI metadata."""
+
+    ui = WORKFLOW_METADATA.get("ui") or {{}}
+    return [control for control in (ui.get("controls") or []) if control.get("key")]
+
+
+def workflow_input_defaults() -> dict[str, Any]:
+    """Mirror the platform UI's default-value rules without requiring the UI."""
+
+    defaults = {{}}
+    for control in workflow_controls():
+        key = str(control["key"])
+        options = control.get("options") or []
+        if "default" in control:
+            defaults[key] = control.get("default")
+        elif options:
+            first = options[0]
+            defaults[key] = first.get("value") if isinstance(first, dict) else first
+        else:
+            defaults[key] = ""
+    return defaults
+
+
 def _json_safe(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -309,10 +333,46 @@ def extract_output(state: dict[str, Any]) -> Any:
 class WorkflowRuntime:
     """In-process workflow runtime with non-persistent short-term memory."""
 
-    def __init__(self, thread_id: str | None = None) -> None:
+    def __init__(
+        self,
+        thread_id: str | None = None,
+        workflow_inputs: dict[str, Any] | None = None,
+    ) -> None:
         self.thread_id = thread_id or str(uuid4())
         self.graph = {factory_name}(crew_id="standalone", agents=AGENT_CONFIGS)
         self.history = []
+        self.workflow_inputs = {{
+            **workflow_input_defaults(),
+            **dict(workflow_inputs or {{}}),
+        }}
+
+    def set_workflow_input(self, key: str, value: Any) -> None:
+        """Set one persistent input used by subsequent turns."""
+
+        key = key.strip()
+        if not key:
+            raise ValueError("Workflow input key cannot be empty")
+        controls = {{str(item["key"]): item for item in workflow_controls()}}
+        control = controls.get(key)
+        options = (control or {{}}).get("options") or []
+        allowed = [
+            str(item.get("value") if isinstance(item, dict) else item)
+            for item in options
+        ]
+        if allowed and str(value) not in allowed:
+            raise ValueError(
+                f"Invalid value for {{key}}: {{value}}. Allowed: {{', '.join(allowed)}}"
+            )
+        self.workflow_inputs[key] = value
+
+    def reset_workflow_input(self, key: str) -> None:
+        """Reset one input to its declared default, or remove an undeclared input."""
+
+        defaults = workflow_input_defaults()
+        if key in defaults:
+            self.workflow_inputs[key] = defaults[key]
+        else:
+            self.workflow_inputs.pop(key, None)
 
     async def ainvoke(
         self,
@@ -321,6 +381,10 @@ class WorkflowRuntime:
     ) -> dict[str, Any]:
         user_message = HumanMessage(content=user_input)
         max_messages = 20
+        effective_inputs = {{
+            **self.workflow_inputs,
+            **dict(workflow_inputs or {{}}),
+        }}
         state = {state_builder_name}(
             crew_id="standalone",
             agents=AGENT_CONFIGS,
@@ -328,7 +392,7 @@ class WorkflowRuntime:
             conversation_id=self.thread_id,
             messages=[*self.history[-max_messages:], user_message],
             user_input=user_input,
-            workflow_inputs=workflow_inputs or {{}},
+            workflow_inputs=effective_inputs,
             request_context={{"request_id": str(uuid4()), "thread_id": self.thread_id}},
         )
         config = {{"configurable": {{"thread_id": self.thread_id}}, "recursion_limit": 100}}
@@ -349,19 +413,120 @@ class WorkflowRuntime:
 def _main_source() -> str:
     return '''"""Interactive command-line runner."""
 
+import argparse
 import asyncio
 import json
 
-from standalone_workflow.runtime import WorkflowRuntime, extract_output
+from standalone_workflow.runtime import (
+    WorkflowRuntime,
+    extract_output,
+    workflow_controls,
+)
+
+
+def apply_assignment(runtime: WorkflowRuntime, assignment: str) -> None:
+    key, separator, value = assignment.partition("=")
+    if not separator or not key.strip():
+        raise ValueError("参数格式必须是 key=value")
+    runtime.set_workflow_input(key, value)
+
+
+def show_config(runtime: WorkflowRuntime) -> None:
+    print("当前 Workflow 参数：")
+    if not runtime.workflow_inputs:
+        print("  （无）")
+        return
+    for key, value in runtime.workflow_inputs.items():
+        print(f"  {key}={value}")
+
+
+def configure_inputs(runtime: WorkflowRuntime) -> None:
+    controls = workflow_controls()
+    if not controls:
+        return
+    print("\\n配置 Workflow 参数，直接回车保留当前值：")
+    for control in controls:
+        key = str(control["key"])
+        label = str(control.get("label") or key)
+        current = runtime.workflow_inputs.get(key, "")
+        options = control.get("options") or []
+        if options:
+            choices = []
+            for option in options:
+                if isinstance(option, dict):
+                    value = option.get("value")
+                    option_label = option.get("label") or value
+                else:
+                    value = option
+                    option_label = option
+                choices.append(f"{value} ({option_label})")
+            print(f"  可选：{', '.join(choices)}")
+        value = input(f"{label} [{current}]: ").strip()
+        if value:
+            try:
+                runtime.set_workflow_input(key, value)
+            except ValueError as exc:
+                print(f"  参数错误：{exc}，保留 {current}")
+
+
+def print_help() -> None:
+    print(
+        "命令：\\n"
+        "  /config              查看当前 Workflow 参数\\n"
+        "  /set key=value       修改后续请求使用的参数\\n"
+        "  /reset key           恢复参数默认值\\n"
+        "  /help                查看命令\\n"
+        "  /exit                退出"
+    )
 
 
 async def main() -> None:
-    runtime = WorkflowRuntime()
-    print("Standalone LangGraph workflow. Type /exit to quit.")
+    parser = argparse.ArgumentParser(description="Run the exported LangGraph workflow")
+    parser.add_argument("--thread-id", help="固定短期记忆线程标识")
+    parser.add_argument(
+        "--set",
+        dest="assignments",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="设置 Workflow 参数，可重复使用",
+    )
+    parser.add_argument(
+        "--no-configure",
+        action="store_true",
+        help="跳过启动时的交互参数配置",
+    )
+    args = parser.parse_args()
+    runtime = WorkflowRuntime(thread_id=args.thread_id)
+    for assignment in args.assignments:
+        try:
+            apply_assignment(runtime, assignment)
+        except ValueError as exc:
+            parser.error(str(exc))
+    if not args.no_configure:
+        configure_inputs(runtime)
+    print("\\nStandalone LangGraph workflow 已启动。输入 /help 查看命令。")
     while True:
         text = input("You> ").strip()
         if text.lower() in {"/exit", "/quit"}:
             return
+        if text == "/help":
+            print_help()
+            continue
+        if text == "/config":
+            show_config(runtime)
+            continue
+        if text.startswith("/set "):
+            try:
+                apply_assignment(runtime, text.removeprefix("/set ").strip())
+                show_config(runtime)
+            except ValueError as exc:
+                print(f"参数错误：{exc}")
+            continue
+        if text.startswith("/reset "):
+            runtime.reset_workflow_input(text.removeprefix("/reset ").strip())
+            show_config(runtime)
+            continue
         if not text:
             continue
         state = await runtime.ainvoke(text)
@@ -384,6 +549,7 @@ def _readme(workflow_name: str) -> str:
 - 使用 LangGraph `MemorySaver` 保存进程内短期状态。
 - 不启用长期记忆；进程退出后短期状态自动清空。
 - Agent 配置与 Workflow 元数据已快照到包内，不需要数据库同步。
+- Workflow 参数会自动读取声明的默认值；详见 `USAGE.md`。
 
 ## 运行
 
@@ -395,22 +561,212 @@ Copy-Item .env.example .env
 python -m standalone_workflow
 ```
 
-请在 `.env` 中填写模型 API Key 和地址。也可以作为 Python 模块调用：
+启动时会根据 Workflow 的 `ui.controls` 询问参数。也可以使用
+`python -m standalone_workflow --no-configure --set key=value` 跳过交互配置。
+
+请在 `.env` 中填写模型 API Key 和地址。完整参数和运行说明见 `USAGE.md`。
+也可以作为 Python 模块调用：
 
 ```python
 import asyncio
 from standalone_workflow import WorkflowRuntime, extract_output
 
 async def main():
-    runtime = WorkflowRuntime(thread_id="demo")
+    runtime = WorkflowRuntime(
+        thread_id="demo",
+        workflow_inputs={{"target_model": "nai_v4"}},
+    )
     state = await runtime.ainvoke(
         "你的任务",
-        workflow_inputs={{"target_model": "nai_v4"}},
     )
     print(extract_output(state))
 
 asyncio.run(main())
 ```
+"""
+
+
+def _usage_guide(
+    workflow_name: str,
+    metadata: dict[str, Any],
+    agent_configs: list[dict[str, Any]],
+) -> str:
+    """Build workflow-specific CLI, Python, parameter, and provider guidance."""
+
+    controls = list((metadata.get("ui") or {}).get("controls") or [])
+    defaults: dict[str, Any] = {}
+    rows = []
+    for control in controls:
+        key = str(control.get("key") or "").strip()
+        if not key:
+            continue
+        options = control.get("options") or []
+        if "default" in control:
+            default = control.get("default")
+        elif options:
+            first = options[0]
+            default = first.get("value") if isinstance(first, dict) else first
+        else:
+            default = ""
+        defaults[key] = default
+        option_values = [
+            str(option.get("value") if isinstance(option, dict) else option)
+            for option in options
+        ]
+        rows.append(
+            "| "
+            + " | ".join(
+                [
+                    key.replace("|", "\\|"),
+                    str(control.get("label") or key).replace("|", "\\|"),
+                    str(control.get("type") or "text").replace("|", "\\|"),
+                    str(default).replace("|", "\\|"),
+                    ", ".join(option_values).replace("|", "\\|") or "-",
+                ]
+            )
+            + " |"
+        )
+    controls_section = (
+        "\n".join(
+            [
+                "| Key | 名称 | 类型 | 默认值 | 可选值 |",
+                "| --- | --- | --- | --- | --- |",
+                *rows,
+            ]
+        )
+        if rows
+        else "此 Workflow 没有声明 `ui.controls`，运行时不需要额外参数。"
+    )
+
+    model_rows = []
+    seen_models: set[tuple[str, str]] = set()
+    for config in agent_configs:
+        agent_name = str(config.get("name") or config.get("source_agent") or "agent")
+        model = str(config.get("model") or "使用 LLM_DEFAULT_MODEL")
+        item = (agent_name, model)
+        if item in seen_models:
+            continue
+        seen_models.add(item)
+        model_rows.append(f"| {agent_name} | {model} |")
+    models_section = (
+        "\n".join(
+            [
+                "| Agent | 模型 |",
+                "| --- | --- |",
+                *model_rows,
+            ]
+        )
+        if model_rows
+        else "此 Workflow 没有导出的 Agent 模型配置。"
+    )
+    example_inputs = json.dumps(defaults, ensure_ascii=False, indent=4).replace(
+        "\n", "\n        "
+    )
+    first_assignment = next(iter(defaults.items()), ("key", "value"))
+
+    return f"""# {workflow_name} 使用说明
+
+## 1. 安装
+
+```powershell
+python -m venv .venv
+.venv\\Scripts\\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+编辑 `.env`，至少填写实际模型提供商需要的 API Key 和 OpenAI-compatible Base URL。
+API Key 不会由平台导出。
+
+## 2. Workflow 参数
+
+参数来自导出时 Workflow metadata 的 `ui.controls`：
+
+{controls_section}
+
+没有显式传值时，`WorkflowRuntime` 会自动使用上表默认值。单次 `ainvoke()` 传入的值
+优先级最高，只覆盖当前调用；`runtime.set_workflow_input()` 设置的值会用于后续多轮。
+
+## 3. 命令行运行
+
+```powershell
+python -m standalone_workflow
+```
+
+启动时会逐项询问上表参数，直接回车保留默认值。也可以跳过启动配置：
+
+```powershell
+python -m standalone_workflow --no-configure --set {first_assignment[0]}={first_assignment[1]}
+```
+
+运行中的命令：
+
+```text
+/config              查看当前参数
+/set key=value       修改后续请求使用的参数
+/reset key           恢复参数默认值
+/help                查看命令
+/exit                退出
+```
+
+同一次进程中的 `thread_id`、LangGraph `MemorySaver` 和最近消息共同提供短期记忆；
+退出程序后状态清空，不会写入数据库。
+
+## 4. Python 调用
+
+```python
+import asyncio
+
+from standalone_workflow import WorkflowRuntime, extract_output
+
+
+async def main():
+    runtime = WorkflowRuntime(
+        thread_id="example-thread",
+        workflow_inputs={example_inputs},
+    )
+    state = await runtime.ainvoke("你的任务")
+    print(extract_output(state))
+
+
+asyncio.run(main())
+```
+
+临时覆盖某一次调用：
+
+```python
+state = await runtime.ainvoke(
+    "下一轮任务",
+    workflow_inputs={{"{first_assignment[0]}": "{first_assignment[1]}"}},
+)
+```
+
+## 5. 模型与提供商
+
+{models_section}
+
+导出包包含工作流实际引用的模型适配代码和 Python SDK 依赖。当前通用适配层使用
+`langchain-openai` 的 `ChatOpenAI`，因此支持 OpenAI-compatible API：
+
+```env
+OPENROUTER_API_KEY=your-key
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+LLM_DEFAULT_MODEL=gpt-5.4
+LLM_SUPERVISOR_MODEL=gpt-5.5
+LLM_REQUEST_TIMEOUT_SECONDS=75
+```
+
+变量名称沿用平台兼容协议；`OPENROUTER_BASE_URL` 可以替换为其他兼容服务地址。
+远程模型、模型权重、API Key 和提供商账户不会打包。
+
+## 6. 包内文件
+
+- `standalone_workflow/runtime.py`：可嵌入的独立运行 API
+- `standalone_workflow/workflow.json`：Workflow metadata 与参数声明
+- `standalone_workflow/agent_configs.json`：Agent 配置快照
+- `standalone_workflow/workflow.dsl.json`：原始 DSL（存在时）
+- `app/`：工作流实际引用的 Agent、业务模块与最小适配层
+- `requirements.txt`：根据最终导出源码计算的 Python 依赖
 """
 
 
@@ -489,8 +845,10 @@ def export_workflow(workflow_name: str) -> WorkflowExport:
     generated = {
         Path("standalone_workflow/__init__.py"): (
             "from standalone_workflow.runtime import "
-            "WorkflowRuntime, extract_output\n\n"
-            "__all__ = [\"WorkflowRuntime\", \"extract_output\"]\n"
+            "WorkflowRuntime, extract_output, workflow_controls, "
+            "workflow_input_defaults\n\n"
+            "__all__ = [\"WorkflowRuntime\", \"extract_output\", "
+            "\"workflow_controls\", \"workflow_input_defaults\"]\n"
         ),
         Path("standalone_workflow/__main__.py"): _main_source(),
         Path("standalone_workflow/runtime.py"): _runner_source(
@@ -506,6 +864,11 @@ def export_workflow(workflow_name: str) -> WorkflowExport:
             {"name": workflow_name, **metadata}, ensure_ascii=False, indent=2
         ) + "\n",
         Path("README.md"): _readme(workflow_name),
+        Path("USAGE.md"): _usage_guide(
+            workflow_name,
+            metadata,
+            agent_configs,
+        ),
         Path(".env.example"): (
             "OPENROUTER_API_KEY=\n"
             "OPENROUTER_BASE_URL=https://openrouter.ai/api/v1\n"
