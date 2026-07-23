@@ -130,6 +130,8 @@ function buildGraph(
   statuses: Record<string, NodeStatus>,
   durations: Record<string, number>,
   selectedEdges: Record<string, EdgeSelection>,
+  compact = false,
+  dark = false,
 ): { nodes: Node<RuntimeNodeData>[]; edges: Edge[] } {
   const ranks = shortestRanks(workflow);
   const fallbackRank = Math.max(0, ...Object.values(ranks)) + 1;
@@ -151,14 +153,26 @@ function buildGraph(
     const row = rowsByRank[rank] ?? 0;
     rowsByRank[rank] = row + 1;
     const workerIndex = workerOrder.get(workflowNode.name);
-    const position = supervised
-      ? workflowNode.name === supervisorName
-        ? { x: 36, y: 72 }
+    const position = compact
+      ? supervised
+        ? workflowNode.name === supervisorName
+          ? { x: 88, y: 10 }
+          : {
+              x: 8 + ((workerIndex ?? 0) % 2) * 158,
+              y: 84 + Math.floor((workerIndex ?? 0) / 2) * 76,
+            }
         : {
-            x: 278 + ((workerIndex ?? 0) % 5) * 212,
-            y: 24 + Math.floor((workerIndex ?? 0) / 5) * 92,
+            x: 8 + (rank % 2) * 158,
+            y: 16 + Math.floor(rank / 2) * 88 + row * 58,
           }
-      : { x: 36 + rank * 224, y: 26 + row * 86 };
+      : supervised
+        ? workflowNode.name === supervisorName
+          ? { x: 36, y: 72 }
+          : {
+              x: 278 + ((workerIndex ?? 0) % 5) * 212,
+              y: 24 + Math.floor((workerIndex ?? 0) / 5) * 92,
+            }
+        : { x: 36 + rank * 224, y: 26 + row * 86 };
     return {
       id: workflowNode.name,
       type: "runtime",
@@ -181,7 +195,9 @@ function buildGraph(
         ? Boolean(selection)
         : statuses[source] === "completed" && ["running", "completed", "error"].includes(statuses[target]);
       const loop = (ranks[target] ?? 0) <= (ranks[source] ?? 0);
-      const stroke = traversed ? (loop ? "#c67b2d" : "#288d63") : loop ? "#c89a68" : "#aab5b0";
+      const stroke = traversed
+        ? (loop ? "#d89a55" : "#45b883")
+        : loop ? (dark ? "#8b6f50" : "#c89a68") : (dark ? "#69766f" : "#aab5b0");
       return {
         id: `runtime-${edgeIndex}-${source}-${target}-${edge.branch ?? "normal"}`,
         source,
@@ -197,8 +213,8 @@ function buildGraph(
           strokeWidth: traversed ? 2.4 : 1.4,
           strokeDasharray: conditional || loop ? "6 4" : undefined,
         },
-        labelStyle: { fill: traversed ? "#176b49" : "#6f7d76", fontSize: 10, fontWeight: 700 },
-        labelBgStyle: { fill: "#edf2ef", fillOpacity: 0.96 },
+        labelStyle: { fill: traversed ? (dark ? "#72d5a7" : "#176b49") : (dark ? "#aebbb4" : "#6f7d76"), fontSize: 10, fontWeight: 700 },
+        labelBgStyle: { fill: dark ? "#1a211e" : "#edf2ef", fillOpacity: 0.96 },
         labelBgPadding: [4, 3] as [number, number],
         labelBgBorderRadius: 3,
         selectable: false,
@@ -213,20 +229,24 @@ export function Pipeline({
   durations,
   selectedEdges,
   onClear,
+  embedded = false,
+  dark = false,
 }: {
   workflow?: Workflow;
   statuses: Record<string, NodeStatus>;
   durations: Record<string, number>;
   selectedEdges: Record<string, EdgeSelection>;
   onClear: () => void;
+  embedded?: boolean;
+  dark?: boolean;
 }) {
   const graph = useMemo(
-    () => workflow ? buildGraph(workflow, statuses, durations, selectedEdges) : { nodes: [], edges: [] },
-    [workflow, statuses, durations, selectedEdges],
+    () => workflow ? buildGraph(workflow, statuses, durations, selectedEdges, embedded, dark) : { nodes: [], edges: [] },
+    [workflow, statuses, durations, selectedEdges, embedded, dark],
   );
   const graphSignature = graph.nodes.map((node) => node.id).join("|");
   return (
-    <section className="pipeline" aria-label="工作流执行拓扑">
+    <section className={`pipeline ${embedded ? "embedded" : ""}`} aria-label="工作流执行拓扑">
       <div className="pipeline-head">
         <div>
           <span className="section-label">执行拓扑</span>
@@ -255,7 +275,7 @@ export function Pipeline({
             proOptions={{ hideAttribution: true }}
             zoomOnDoubleClick={false}
           >
-            <Background color="#d3dbd7" gap={20} size={1} />
+            <Background color={dark ? "#303a35" : "#d3dbd7"} gap={20} size={1} />
             <Controls position="bottom-right" showInteractive={false} />
             <AutoFitGraph signature={graphSignature} />
           </ReactFlow>

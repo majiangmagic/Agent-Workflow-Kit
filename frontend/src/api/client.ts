@@ -1,4 +1,4 @@
-import type { Conversation, Crew, DslData, DslKind, DslSummary, Message, Workflow, WorkflowInputs } from "../types";
+import type { Conversation, Crew, DslData, DslKind, DslSummary, Message, StreamProtocolEvent, Workflow, WorkflowInputs } from "../types";
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
@@ -80,6 +80,7 @@ export async function streamChat(
   onEvent: (event: Record<string, unknown>) => void,
   signal?: AbortSignal,
   resume = false,
+  onDelta?: (delta: string, event: StreamProtocolEvent | null) => void,
 ): Promise<string> {
   const response = await fetch(`/api/conversations/${conversationId}/chat/stream`, {
     method: "POST",
@@ -95,24 +96,60 @@ export async function streamChat(
   const decoder = new TextDecoder();
   let buffer = "";
   let content = "";
+  let structuredProtocol = false;
+  let streamError = "";
+  let doneReceived = false;
+
+  const consumeBlock = (block: string) => {
+    const data = block
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!data) return false;
+    if (data === "[DONE]") {
+      doneReceived = true;
+      return true;
+    }
+    const event = JSON.parse(data) as Record<string, unknown>;
+    onEvent(event);
+    if (event.object === "agent.workflow.stream") {
+      structuredProtocol = true;
+      const protocolEvent = event as StreamProtocolEvent;
+      if (protocolEvent.type === "run.failed") {
+        streamError = protocolEvent.error || "工作流执行失败";
+      }
+      if (protocolEvent.type === "message.delta" && protocolEvent.delta) {
+        content += protocolEvent.delta;
+        onDelta?.(protocolEvent.delta, protocolEvent);
+      }
+    } else if (!structuredProtocol && event.object === "chat.completion.chunk") {
+      const choices = event.choices as Array<{ delta?: { content?: string } }> | undefined;
+      const delta = choices?.[0]?.delta?.content ?? "";
+      content += delta;
+      if (delta) onDelta?.(delta, null);
+    }
+    return false;
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+    buffer += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n");
     const blocks = buffer.split("\n\n");
     buffer = blocks.pop() ?? "";
     for (const block of blocks) {
-      const line = block.split("\n").find((part) => part.startsWith("data: "));
-      if (!line) continue;
-      const raw = line.slice(6);
-      if (raw === "[DONE]") return content;
-      const event = JSON.parse(raw) as Record<string, unknown>;
-      onEvent(event);
-      if (event.object === "chat.completion.chunk") {
-        const choices = event.choices as Array<{ delta?: { content?: string } }> | undefined;
-        content += choices?.[0]?.delta?.content ?? "";
+      if (consumeBlock(block)) {
+        if (streamError) throw new Error(streamError);
+        return content;
       }
     }
+  }
+  buffer += decoder.decode();
+  if (buffer.trim()) consumeBlock(buffer);
+  if (streamError) throw new Error(streamError);
+  if (!doneReceived && !signal?.aborted) {
+    throw new Error("工作流流式连接意外结束");
   }
   return content;
 }

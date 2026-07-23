@@ -436,8 +436,24 @@ POST /api/conversations/{conversation_id}/chat
 POST /api/conversations/{conversation_id}/chat/stream
 ```
 
-流式接口会发送 Workflow 事件和 OpenAI 风格的 `chat.completion.chunk`，最后发送
-`[DONE]`。常见事件包括：
+流式接口使用 `agent.workflow.stream/1.0` 协议发送运行、消息和 Workflow
+生命周期事件，并继续发送 OpenAI 风格的 `chat.completion.chunk` 供旧客户端兼容，
+最后发送 `[DONE]`。
+
+协议事件按 `sequence` 严格递增，常见类型包括：
+
+```text
+run.started
+message.started
+workflow.progress
+message.delta
+message.completed
+run.completed
+run.failed
+run.cancelled
+```
+
+`workflow.progress.event` 中保留原始 Workflow 事件：
 
 ```text
 workflow.started
@@ -447,6 +463,10 @@ workflow.task.assigned
 workflow.agent.error
 workflow.completed
 ```
+
+前端优先消费新协议：`message.delta` 增量更新同一条 assistant-ui 消息，
+`workflow.progress` 驱动执行拓扑和事件时间线。旧客户端可以继续只读取
+`workflow.event` 与 `chat.completion.chunk`。
 
 ## API 概览
 

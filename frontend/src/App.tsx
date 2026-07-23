@@ -1,16 +1,17 @@
 import {
   Menu,
-  Code2,
-  Send,
-  Square,
+  Moon,
+  PanelRightOpen,
+  Plus,
+  Sun,
   Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api/client";
+import { AssistantChat } from "./components/AssistantChat";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { DslDesigner } from "./components/DslDesigner";
-import { MessageList } from "./components/MessageList";
-import { Pipeline } from "./components/Pipeline";
+import { ExecutionInspector } from "./components/ExecutionInspector";
 import { Sidebar } from "./components/Sidebar";
 import { WorkflowControls } from "./components/WorkflowControls";
 import { WorkflowInterruptDialog } from "./components/WorkflowInterruptDialog";
@@ -76,6 +77,12 @@ export default function App() {
   const [error, setError] = useState("");
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(() => window.innerWidth > 1100);
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const saved = localStorage.getItem("workflow-theme");
+    if (saved === "light" || saved === "dark") return saved;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
   const [view, setView] = useState<"runtime" | "designer">("runtime");
   const [dismissedInterrupt, setDismissedInterrupt] = useState("");
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -127,6 +134,11 @@ export default function App() {
   useEffect(() => {
     setWorkflowInputs((current) => initialInputs(controls, current));
   }, [controls]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("workflow-theme", theme);
+  }, [theme]);
 
   const loadConversations = useCallback(async () => {
     if (!crewId || !userId.trim()) {
@@ -304,6 +316,7 @@ export default function App() {
     setError("");
     setDraft("");
     let targetConversationId = conversationId;
+    let optimisticAssistantId = "";
     try {
       if (!targetConversationId) {
         let crew = selectedCrew;
@@ -326,21 +339,43 @@ export default function App() {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      setMessages((current) => [...current, optimisticUser]);
-      const result = await stream.run(targetConversationId, message, workflowInputs);
-      setMessages((current) => [
-        ...current,
-        {
-          ...optimisticUser,
-          id: `local-result-${crypto.randomUUID()}`,
-          role: "assistant",
-          content: result || "工作流已完成，但没有返回提示词。",
-        },
-      ]);
+      optimisticAssistantId = `local-result-${crypto.randomUUID()}`;
+      const optimisticAssistant: Message = {
+        ...optimisticUser,
+        id: optimisticAssistantId,
+        role: "assistant",
+        content: "",
+        status: "processing",
+      };
+      setMessages((current) => [...current, optimisticUser, optimisticAssistant]);
+      const result = await stream.run(targetConversationId, message, workflowInputs, false, {
+        onDelta: (delta) => setMessages((current) => current.map((item) =>
+          item.id === optimisticAssistantId
+            ? { ...item, content: item.content + delta }
+            : item
+        )),
+      });
+      setMessages((current) => current.map((item) =>
+        item.id === optimisticAssistantId
+          ? {
+              ...item,
+              content: result || "工作流已完成，但没有返回内容。",
+              status: "completed",
+            }
+          : item
+      ));
       const [history] = await Promise.all([api.messages(targetConversationId), loadConversations()]);
       setMessages(history);
     } catch (reason) {
-      if (reason instanceof DOMException && reason.name === "AbortError") return;
+      if (reason instanceof DOMException && reason.name === "AbortError") {
+        setMessages((current) => current.map((item) =>
+          item.id === optimisticAssistantId ? { ...item, status: "failed", metadata: { ...item.metadata, cancelled: true } } : item
+        ));
+        return;
+      }
+      setMessages((current) => current.map((item) =>
+        item.id === optimisticAssistantId ? { ...item, status: "failed" } : item
+      ));
       reportError(reason);
     }
   }
@@ -360,9 +395,28 @@ export default function App() {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-    setMessages((current) => [...current, optimisticUser]);
+    const optimisticAssistantId = `local-result-${crypto.randomUUID()}`;
+    const optimisticAssistant: Message = {
+      ...optimisticUser,
+      id: optimisticAssistantId,
+      role: "assistant",
+      content: "",
+      status: "processing",
+    };
+    setMessages((current) => [...current, optimisticUser, optimisticAssistant]);
     try {
-      await stream.run(conversationId, answer, workflowInputs, true);
+      const result = await stream.run(conversationId, answer, workflowInputs, true, {
+        onDelta: (delta) => setMessages((current) => current.map((item) =>
+          item.id === optimisticAssistantId
+            ? { ...item, content: item.content + delta }
+            : item
+        )),
+      });
+      setMessages((current) => current.map((item) =>
+        item.id === optimisticAssistantId
+          ? { ...item, content: result, status: "completed" }
+          : item
+      ));
       const [history] = await Promise.all([
         api.messages(conversationId),
         loadConversations(),
@@ -370,7 +424,15 @@ export default function App() {
       setMessages(history);
       setDismissedInterrupt("");
     } catch (reason) {
-      if (reason instanceof DOMException && reason.name === "AbortError") return;
+      if (reason instanceof DOMException && reason.name === "AbortError") {
+        setMessages((current) => current.map((item) =>
+          item.id === optimisticAssistantId ? { ...item, status: "failed", metadata: { ...item.metadata, cancelled: true } } : item
+        ));
+        return;
+      }
+      setMessages((current) => current.map((item) =>
+        item.id === optimisticAssistantId ? { ...item, status: "failed" } : item
+      ));
       setDismissedInterrupt("");
       reportError(reason);
     }
@@ -399,99 +461,113 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${inspectorOpen ? "inspector-visible" : ""}`}>
       <div className={`sidebar-backdrop ${sidebarOpen ? "visible" : ""}`} onClick={() => setSidebarOpen(false)} />
       <div className={`sidebar-wrap ${sidebarOpen ? "open" : ""}`}>
         <Sidebar
           busy={busy}
           conversations={conversations}
-          crewId={crewId}
-          crews={crews}
           currentConversationId={conversationId}
-          onCreateCrew={() => void createSampleCrew()}
-          onCrewChange={changeCrew}
           onDeleteConversation={confirmDeleteConversation}
-          onDeleteCrew={confirmDeleteCrew}
           onNewConversation={resetConversation}
           onOpenConversation={(id) => void openConversation(id)}
+          onOpenDesigner={() => setView("designer")}
           onRefresh={() => void loadConversations()}
           onUserIdChange={(value) => { setUserId(value); localStorage.setItem("workflow-user-id", value); resetConversation(); }}
-          onWorkflowChange={(value) => void changeWorkflow(value)}
           userId={userId}
-          workflowName={workflowName}
-          workflows={workflows}
         />
       </div>
 
       <section className="workbench">
         <header className="workbench-header">
-          <div className="header-title">
-            <button className="mobile-menu-button" onClick={() => setSidebarOpen(true)} title="打开导航" type="button"><Menu size={19} /></button>
-            <div>
-              <span className="eyebrow">{selectedWorkflow?.name ?? "WORKFLOW"}</span>
-              <h1>{currentConversation?.title || selectedWorkflow?.ui.title || "新建工作流任务"}</h1>
-              <p>{conversationId || selectedWorkflow?.ui.description || "选择 Crew 后开始"}</p>
+          <div className="header-primary">
+            <div className="header-title">
+              <button className="mobile-menu-button" onClick={() => setSidebarOpen(true)} title="打开导航" type="button"><Menu size={19} /></button>
+              <div>
+                <span className="eyebrow">{selectedWorkflow?.name ?? "WORKFLOW"}</span>
+                <h1>{currentConversation?.title || selectedWorkflow?.ui.title || "新建工作流任务"}</h1>
+                <p>{conversationId || selectedWorkflow?.ui.description || "选择 Crew 后开始"}</p>
+              </div>
+            </div>
+            <div className="turn-actions">
+              <button className="icon-button light" onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")} title={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} type="button">
+                {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+              <button className={`icon-button light ${inspectorOpen ? "active" : ""}`} onClick={() => setInspectorOpen((open) => !open)} title="切换运行检查器" type="button"><PanelRightOpen size={16} /></button>
+              <button className="icon-button light danger" disabled={!conversationId || busy} onClick={() => conversationId && confirmDeleteConversation(conversationId)} title="删除当前会话" type="button"><Trash2 size={16} /></button>
             </div>
           </div>
-          <div className="header-tools">
+          <div className="header-config">
+            <div className="workspace-pickers">
+              <label>
+                <span>Crew</span>
+                <select disabled={stream.running} onChange={(event) => changeCrew(event.target.value)} value={crewId}>
+                  {!crews.length && <option value="">暂无 Crew</option>}
+                  {crews.map((crew) => (
+                    <option key={crew.id} value={crew.id}>
+                      {crew.name}{crew.workflow_missing ? `（缺失：${crew.workflow_type}）` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>工作流</span>
+                <select disabled={stream.running} onChange={(event) => void changeWorkflow(event.target.value)} value={workflowName}>
+                  {!workflowName && crewId && <option value="">请选择可用工作流</option>}
+                  {workflows.map((workflow) => (
+                    <option key={workflow.name} value={workflow.name}>{workflow.ui.title ?? workflow.name}</option>
+                  ))}
+                </select>
+              </label>
+              <button className="icon-button light" disabled={!workflowName || busy} onClick={() => void createSampleCrew()} title="创建示例 Crew" type="button"><Plus size={16} /></button>
+              <button className="icon-button light danger" disabled={!crewId || busy} onClick={confirmDeleteCrew} title="删除 Crew" type="button"><Trash2 size={16} /></button>
+            </div>
             <WorkflowControls
               controls={controls}
               disabled={stream.running}
               onChange={(key, value) => setWorkflowInputs((current) => ({ ...current, [key]: value }))}
               values={workflowInputs}
             />
-            <div className="turn-actions">
-              <button className="icon-button light" onClick={() => setView("designer")} title="打开 DSL 设计器" type="button"><Code2 size={16} /></button>
-              <button className="icon-button light danger" disabled={!conversationId || busy} onClick={() => conversationId && confirmDeleteConversation(conversationId)} title="删除当前会话" type="button"><Trash2 size={16} /></button>
-            </div>
           </div>
         </header>
 
         {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError("")} type="button">关闭</button></div>}
-        <Pipeline
-          durations={stream.nodeDurations}
-          onClear={stream.clear}
-          selectedEdges={stream.selectedEdges}
-          statuses={stream.nodeStatuses}
-          workflow={selectedWorkflow}
-        />
-        <MessageList
+        <AssistantChat
+          composerRef={composerRef}
+          disabled={!selectedCrew}
+          draft={draft}
+          emptyDescription={selectedWorkflow?.ui.description || "选择 Crew 和 Workflow 后开始执行任务。"}
+          emptyTitle={selectedWorkflow?.ui.title || "从哪里开始？"}
+          hint={selectedWorkflow?.ui.input_hint || "消息将按当前工作流执行"}
           messages={messages}
           onClarificationExplain={explainClarification}
           onClarificationReply={(reply) => pendingInterrupt
             ? void resumeWorkflow(reply)
             : void sendMessage(reply)}
           onClarificationRetry={retryClarification}
+          onCancel={stream.cancel}
           onDeleteLatestTurn={confirmDeleteLatestTurn}
           onRewind={confirmRewind}
+          onSend={sendMessage}
           pending={stream.running}
+          placeholder={selectedWorkflow?.ui.input_placeholder || "输入要交给工作流处理的任务…"}
         />
-
-        <form className="composer" onSubmit={(event) => { event.preventDefault(); void sendMessage(); }}>
-          <textarea
-            disabled={!selectedCrew}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                void sendMessage();
-              }
-            }}
-            placeholder={selectedWorkflow?.ui.input_placeholder || "输入要交给工作流处理的任务……"}
-            rows={3}
-            ref={composerRef}
-            value={draft}
-          />
-          <div className="composer-footer">
-            <span>{selectedWorkflow?.ui.input_hint || "消息将按当前工作流执行"}</span>
-            {stream.running ? (
-              <button className="stop-button" onClick={stream.cancel} type="button"><Square size={14} fill="currentColor" />停止</button>
-            ) : (
-              <button className="send-button" disabled={!draft.trim() || !selectedCrew || loading} type="submit">运行工作流<Send size={15} /></button>
-            )}
-          </div>
-        </form>
       </section>
+
+      <button className={`inspector-backdrop ${inspectorOpen ? "visible" : ""}`} aria-label="关闭运行检查器" onClick={() => setInspectorOpen(false)} type="button" />
+      <ExecutionInspector
+        dark={theme === "dark"}
+        durations={stream.nodeDurations}
+        events={stream.runtimeEvents}
+        onClear={stream.clear}
+        onClose={() => setInspectorOpen(false)}
+        open={inspectorOpen}
+        runError={stream.runError}
+        runStatus={stream.runStatus}
+        selectedEdges={stream.selectedEdges}
+        statuses={stream.nodeStatuses}
+        workflow={selectedWorkflow}
+      />
 
       <ConfirmDialog
         confirmLabel={confirmation?.confirmLabel}

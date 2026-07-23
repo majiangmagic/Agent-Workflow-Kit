@@ -2,6 +2,7 @@
 API routes for conversations and chat functionality
 """
 import asyncio
+from contextlib import suppress
 import logging
 from typing import List, Optional, Dict, Any
 import uuid
@@ -12,7 +13,7 @@ from langgraph.types import Command
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 
-from app.db.base import get_db
+from app.db.base import async_session_factory, get_db
 from app.core.config import settings
 from app.models.conversation import MessageRole, MessageStatus
 from app.models.activity_log import ActivityType
@@ -244,6 +245,13 @@ def stream_data(data: Dict[str, Any]) -> str:
     """Serialize one server-sent event payload."""
 
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def iter_text_deltas(content: str, chunk_size: int = 48):
+    """Split final workflow text into stable transport deltas."""
+
+    for start in range(0, len(content), chunk_size):
+        yield content[start:start + chunk_size]
 
 
 def summarize_supervisor_state(supervisor_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -825,10 +833,29 @@ async def chat_stream(
     # Stream the configured workflow result as SSE.
     async def stream_response():
         message_id = str(assistant_message.id)
+        run_id = str(uuid.uuid4())
+        sequence = 0
         content_so_far = ""
         workflow_memory = {}
         workflow_result = {}
+        stream_failed = False
+        workflow_task = None
         sink = WorkflowEventSink()
+
+        def protocol_event(event_type: str, **payload: Any) -> Dict[str, Any]:
+            nonlocal sequence
+            sequence += 1
+            return {
+                "id": f"{run_id}:{sequence}",
+                "object": "agent.workflow.stream",
+                "version": "1.0",
+                "type": event_type,
+                "run_id": run_id,
+                "conversation_id": str(conversation_id),
+                "message_id": message_id,
+                "sequence": sequence,
+                **payload,
+            }
 
         async def run_workflow():
             token = set_event_sink(sink)
@@ -871,11 +898,19 @@ async def chat_stream(
                 sink.close()
         
         try:
+            yield stream_data(protocol_event("run.started"))
+            yield stream_data(
+                protocol_event(
+                    "message.started",
+                    message={"id": message_id, "role": "assistant", "status": "processing"},
+                )
+            )
             workflow_task = asyncio.create_task(run_workflow())
             while True:
                 event = await sink.queue.get()
                 if event.get("type") == "_workflow.event_stream.done":
                     break
+                yield stream_data(protocol_event("workflow.progress", event=event))
                 yield stream_data(event)
 
             final_state = await workflow_task
@@ -884,20 +919,32 @@ async def chat_stream(
                 extract_workflow_outcome(final_state)
             )
 
-            data = {
-                "id": message_id,
-                "object": "chat.completion.chunk",
-                "created": int(assistant_message.created_at.timestamp()),
-                "model": runtime_agent.get("model") or "local-agent",
-                "choices": [
-                    {
-                        "delta": {"content": content_so_far},
-                        "index": 0,
-                        "finish_reason": None
-                    }
-                ]
-            }
-            yield stream_data(data)
+            for delta in iter_text_deltas(content_so_far):
+                yield stream_data(protocol_event("message.delta", delta=delta))
+                data = {
+                    "id": message_id,
+                    "object": "chat.completion.chunk",
+                    "created": int(assistant_message.created_at.timestamp()),
+                    "model": runtime_agent.get("model") or "local-agent",
+                    "choices": [
+                        {
+                            "delta": {"content": delta},
+                            "index": 0,
+                            "finish_reason": None
+                        }
+                    ]
+                }
+                yield stream_data(data)
+                await asyncio.sleep(0)
+
+            yield stream_data(
+                protocol_event(
+                    "message.completed",
+                    status="completed",
+                    metadata={"workflow_result": workflow_result},
+                )
+            )
+            yield stream_data(protocol_event("run.completed"))
             
             # Send final chunk with finish_reason: "stop"
             data = {
@@ -915,12 +962,45 @@ async def chat_stream(
             }
             yield stream_data(data)
             
+        except asyncio.CancelledError:
+            if workflow_task is not None and not workflow_task.done():
+                workflow_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await workflow_task
+
+            async def persist_cancelled_message() -> None:
+                async with async_session_factory() as cancel_db:
+                    cancelled_message = await ConversationService.update_message_status(
+                        db=cancel_db,
+                        message_id=assistant_message.id,
+                        status=MessageStatus.FAILED,
+                        metadata={
+                            "final_content": content_so_far,
+                            "agent_name": runtime_agent.get("agent_name"),
+                            "stream_protocol": "agent.workflow.stream/1.0",
+                            "stream_status": "cancelled",
+                        },
+                    )
+                    if cancelled_message is not None:
+                        cancelled_message.content = content_so_far
+                    await cancel_db.commit()
+
+            persist_task = asyncio.create_task(persist_cancelled_message())
+            with suppress(asyncio.CancelledError):
+                await asyncio.shield(persist_task)
+            raise
         except Exception as e:
+            stream_failed = True
             logger.exception("Workflow streaming failed for conversation %s", conversation_id)
             
             # Send error message to the client
             error_msg = f"工作流执行失败：{e}"
             content_so_far = error_msg
+            yield stream_data(protocol_event("run.failed", error=str(e)))
+            yield stream_data(protocol_event("message.delta", delta=error_msg))
+            yield stream_data(
+                protocol_event("message.completed", status="failed", error=str(e))
+            )
             
             # Format error as a streaming chunk
             data = {
@@ -960,10 +1040,11 @@ async def chat_stream(
         await ConversationService.update_message_status(
             db=db,
             message_id=assistant_message.id,
-            status=MessageStatus.COMPLETED,
+            status=MessageStatus.FAILED if stream_failed else MessageStatus.COMPLETED,
             metadata={
                 "final_content": content_so_far,
                 "agent_name": runtime_agent.get("agent_name"),
+                "stream_protocol": "agent.workflow.stream/1.0",
                 **({"workflow_memory": workflow_memory} if workflow_memory else {}),
                 **({"workflow_result": workflow_result} if workflow_result else {}),
             }

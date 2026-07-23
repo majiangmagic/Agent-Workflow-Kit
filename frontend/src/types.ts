@@ -106,6 +106,29 @@ export type WorkflowEvent = {
   max_iterations?: number | null;
 };
 
+export type StreamProtocolEvent = {
+  object: "agent.workflow.stream";
+  version: "1.0";
+  type:
+    | "run.started"
+    | "workflow.progress"
+    | "message.started"
+    | "message.delta"
+    | "message.completed"
+    | "run.completed"
+    | "run.failed"
+    | "run.cancelled";
+  run_id: string;
+  conversation_id: string;
+  message_id: string;
+  sequence: number;
+  delta?: string;
+  status?: string;
+  error?: string;
+  event?: WorkflowEvent;
+  metadata?: Record<string, unknown>;
+};
+
 export type NodeStatus = "idle" | "running" | "completed" | "error";
 export type EdgeSelection = {
   from: string;
@@ -113,6 +136,13 @@ export type EdgeSelection = {
   branch: "then" | "otherwise" | "exhausted";
   iteration: number;
   maxIterations?: number | null;
+};
+export type RuntimeEvent = {
+  id: string;
+  type: string;
+  node?: string;
+  label: string;
+  timestamp: number;
 };
 export type WorkflowInputs = Record<string, string>;
 

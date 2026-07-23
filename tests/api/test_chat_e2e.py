@@ -186,6 +186,25 @@ async def test_chat_stream_includes_workflow_node_events(db_session):
                 == "Stream workflow response"
                 for event in events
             )
+            protocol_events = [
+                event
+                for event in events
+                if isinstance(event, dict)
+                and event.get("object") == "agent.workflow.stream"
+            ]
+            assert [event["sequence"] for event in protocol_events] == list(
+                range(1, len(protocol_events) + 1)
+            )
+            assert protocol_events[0]["type"] == "run.started"
+            assert any(event["type"] == "message.started" for event in protocol_events)
+            assert any(event["type"] == "workflow.progress" for event in protocol_events)
+            assert "".join(
+                event.get("delta", "")
+                for event in protocol_events
+                if event["type"] == "message.delta"
+            ) == "Stream workflow response"
+            assert any(event["type"] == "message.completed" for event in protocol_events)
+            assert any(event["type"] == "run.completed" for event in protocol_events)
             assert events[-1] == "[DONE]"
     finally:
         app.dependency_overrides.pop(get_db, None)
