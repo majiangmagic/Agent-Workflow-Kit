@@ -3,9 +3,9 @@ requires = ["setuptools>=42.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent_workflow_kit"
+name = "langgraph-multi-agent-workflow-studio"
 version = "0.1.0"
-description = "A FastAPI and LangGraph backend kit for composable agent workflows"
+description = "A visual LangGraph studio for composable multi-agent workflows"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {file = "LICENSE"}

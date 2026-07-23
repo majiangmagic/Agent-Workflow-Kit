@@ -27,7 +27,7 @@ export function Sidebar(props: Props) {
       <div className="brand">
         <div className="brand-mark"><WorkflowIcon size={19} /></div>
         <div>
-          <strong>Agent Workflow</strong>
+          <strong>LangGraph Studio</strong>
           <span><i className={props.busy ? "busy" : ""} />{props.busy ? "工作流运行中" : "本地服务已连接"}</span>
         </div>
       </div>

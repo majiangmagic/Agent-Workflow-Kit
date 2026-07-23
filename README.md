@@ -1,4 +1,4 @@
-# Agent Workflow Kit
+# LangGraph Multi-Agent Workflow Studio
 
 一个面向二次开发的本地优先多 Agent 工作流平台。
 

@@ -1,5 +1,5 @@
 {
-  "name": "agent-workflow-studio",
+  "name": "langgraph-multi-agent-workflow-studio",
   "private": true,
   "version": "0.1.0",
   "type": "module",

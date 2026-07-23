@@ -25,8 +25,8 @@ WEB_DIR = Path(__file__).resolve().parent / "web" / "dist"
 
 # Create FastAPI app with metadata for OpenAPI/Swagger docs
 app = FastAPI(
-    title="Agent Workflow Kit API",
-    description="API for composable LangGraph agent workflows.",
+    title="LangGraph Multi-Agent Workflow Studio API",
+    description="API for building and running composable LangGraph multi-agent workflows.",
     version="0.1.0",
     openapi_url="/api/openapi.json",
     docs_url="/api/docs",

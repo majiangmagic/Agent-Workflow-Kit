@@ -15,7 +15,7 @@ def test_web_app_serves_index():
     response = client.get("/")
 
     assert response.status_code == 200
-    assert "Agent Workflow Studio" in response.text
+    assert "LangGraph Multi-Agent Workflow Studio" in response.text
     assert 'id="root"' in response.text
     assert "/static/assets/index-" in response.text
 
