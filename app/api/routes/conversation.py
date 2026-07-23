@@ -103,83 +103,6 @@ def extract_workflow_response(final_state: Dict[str, Any]) -> str:
     return "Workflow completed without an assistant response."
 
 
-def extract_workflow_memory(final_state: Dict[str, Any]) -> Dict[str, Any]:
-    """提取跨轮业务状态，不保存系统提示词或模型配置。"""
-
-    memory: Dict[str, Any] = {}
-    newest_document_version = -1
-    newest_ir_version = -1
-    for node_state in (final_state.get("nodes") or {}).values():
-        document = node_state.get("scene_document")
-        if isinstance(document, dict):
-            version = int(document.get("version") or 0)
-            if version >= newest_document_version:
-                memory["scene_document"] = document
-                newest_document_version = version
-        prompt_ir = node_state.get("resolved_prompt_ir")
-        if not isinstance(prompt_ir, dict):
-            prompt_ir = node_state.get("previous_resolved_prompt_ir")
-        if isinstance(prompt_ir, dict):
-            version = int(prompt_ir.get("document_version") or 0)
-            if version >= newest_ir_version:
-                memory["resolved_prompt_ir"] = prompt_ir
-                newest_ir_version = version
-        contract = node_state.get("request_contract")
-        if (
-            "scene_document" not in memory
-            and isinstance(contract, dict)
-            and contract.get("resolved_request")
-        ):
-            memory["request_contract"] = contract
-            memory["resolved_user_request"] = (
-                node_state.get("resolved_user_request")
-                or contract["resolved_request"]
-            )
-    return memory
-
-
-def extract_workflow_result(final_state: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract structured UI-facing result metadata from the terminal node."""
-
-    nodes = final_state.get("nodes") or {}
-    diagnostics = {
-        key: value
-        for key, value in {
-            "editor_error": (nodes.get("scene_document_editor") or {}).get(
-                "editor_error"
-            ),
-            "patch_error": (nodes.get("scene_document_processor") or {}).get(
-                "patch_error"
-            ),
-            "patch_intent": (
-                (nodes.get("scene_document_editor") or {}).get("patch_proposal")
-                or {}
-            ).get("intent"),
-        }.items()
-        if value
-    }
-    for node_state in reversed(list(nodes.values())):
-        final_output = node_state.get("final_output")
-        if not isinstance(final_output, dict):
-            continue
-        result = {
-            key: final_output.get(key)
-            for key in (
-                "status",
-                "target_model",
-                "document_version",
-                "clarification_request",
-                "warnings",
-                "unresolved_requirements",
-            )
-            if final_output.get(key) is not None
-        }
-        if diagnostics:
-            result["workflow_diagnostics"] = diagnostics
-        return result
-    return {}
-
-
 def extract_workflow_interrupt(final_state: Dict[str, Any]) -> Dict[str, Any]:
     """Return the first structured LangGraph interrupt, when execution paused."""
 
@@ -207,15 +130,14 @@ def extract_workflow_interrupt(final_state: Dict[str, Any]) -> Dict[str, Any]:
 def extract_workflow_outcome(
     final_state: Dict[str, Any],
 ) -> tuple[str, Dict[str, Any], Dict[str, Any]]:
-    """Extract response text, durable workflow memory, and UI result metadata."""
+    """Extract response text and generic interruption metadata."""
 
-    workflow_memory = extract_workflow_memory(final_state)
     interrupted = extract_workflow_interrupt(final_state)
     if interrupted:
         question = interrupted["question"]
         return (
-            f"需要确认：{question}",
-            workflow_memory,
+            f"?????{question}",
+            {},
             {
                 "status": "needs_clarification",
                 "resumable": True,
@@ -226,11 +148,7 @@ def extract_workflow_outcome(
                 },
             },
         )
-    return (
-        extract_workflow_response(final_state),
-        workflow_memory,
-        extract_workflow_result(final_state),
-    )
+    return extract_workflow_response(final_state), {}, {}
 
 
 def get_supervisor_state(final_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -290,8 +208,6 @@ async def build_workflow_for_conversation(
 
     workflow_type = WorkflowService.get_workflow_type(crew)
     runtime_inputs = dict(workflow_inputs or {})
-    if workflow_type == "prompt_generation_workflow":
-        runtime_inputs["_request_id"] = str(user_message.id)
     try:
         history_messages = await get_short_term_history(db, conversation.id)
         workflow, initial_state = WorkflowService.create_workflow_run(

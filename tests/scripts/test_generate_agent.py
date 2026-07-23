@@ -13,8 +13,6 @@ assert SPEC.loader is not None
 sys.modules["generate_agent"] = generate_agent
 SPEC.loader.exec_module(generate_agent)
 
-EXAMPLE_AGENTS = MODULE_PATH.parents[1] / "examples" / "agents"
-
 
 def test_generate_agent_preserves_existing_node_blocks(tmp_path, monkeypatch):
     """Refreshing a DSL should keep business logic for unchanged node names."""
@@ -170,52 +168,3 @@ def test_generate_agent_supports_grouped_package(tmp_path, monkeypatch):
     assert '"name": "research_agent"' in (
         agent_dir / "config_defaults.json"
     ).read_text(encoding="utf-8")
-
-
-def test_prompt_agents_use_real_internal_stages():
-    """Complex prompt agents prepare inputs before running business logic."""
-
-    staged_agents = {
-        "scene_document_editor": [
-            "prepare_context", "prepare_request", "propose_patch", "validate_patch"
-        ],
-        "scene_document_processor": [
-            "prepare_context", "validate_patch", "apply_patch", "validate_document"
-        ],
-        "character_identity_resolver": [
-            "prepare_context", "collect_identities", "resolve_identities", "validate_identity_result"
-        ],
-        "visual_semantic_resolver": [
-            "prepare_context", "prepare_semantics", "resolve_visual_semantics", "validate_visual_result"
-        ],
-        "prompt_compiler": [
-            "prepare_context", "collect_terms", "compile_prompt", "validate_prompt_ir"
-        ],
-        "prompt_consistency_validator": [
-            "prepare_context", "collect_invariants", "validate_prompt", "finalize_validation"
-        ],
-        "prompt_semantic_repairer": [
-            "prepare_context", "collect_repair_scope", "repair_semantics", "validate_repair"
-        ],
-        "prompt_target_renderer": [
-            "prepare_context", "validate_render_input", "render_prompt", "validate_render_result"
-        ],
-    }
-    for agent_name, stages in staged_agents.items():
-        data = json.loads(
-            (EXAMPLE_AGENTS / f"{agent_name}.json").read_text(encoding="utf-8")
-        )
-        assert data["entrypoint"] == "prepare_context"
-        assert list(data["nodes"]) == stages
-        assert data["edges"] == [
-            *[
-                {"from": source, "to": target}
-                for source, target in zip(stages, stages[1:])
-            ],
-            {"from": stages[-1], "to": "END"},
-        ]
-
-    impact_router = json.loads(
-        (EXAMPLE_AGENTS / "prompt_impact_router.json").read_text(encoding="utf-8")
-    )
-    assert set(impact_router["nodes"]) == {"route_impact"}

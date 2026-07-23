@@ -1,7 +1,6 @@
 import { Bot, CircleHelp, History, PencilLine, RotateCcw, Trash2, UserRound } from "lucide-react";
 import { useEffect, useRef } from "react";
 import type { ClarificationRequest, Message, WorkflowResultMetadata } from "../types";
-import { PromptResult } from "./PromptResult";
 
 function clarificationFor(message: Message): ClarificationRequest | null {
   const result = message.metadata?.workflow_result as WorkflowResultMetadata | undefined;
@@ -48,8 +47,8 @@ export function MessageList({
       <div className="message-list">
         <div className="empty-workspace">
           <Bot size={28} strokeWidth={1.6} />
-          <strong>描述你想生成的画面</strong>
-          <p>工作流会理解上下文、验证标签并按目标模型整理 Prompt。</p>
+          <strong>选择一个工作流开始对话</strong>
+          <p>工作流会根据当前配置处理你的请求。</p>
         </div>
       </div>
     );
@@ -90,7 +89,7 @@ export function MessageList({
                   )}
                 </div>
               ) : (
-                <PromptResult content={message.content} />
+                <div className="message-text">{message.content}</div>
               )}
             </div>
             {user && onRewind && !message.id.startsWith("local-") && (

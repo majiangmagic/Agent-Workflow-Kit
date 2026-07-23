@@ -25,7 +25,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, type RefObject } from "react";
 import type { ClarificationRequest, Message, WorkflowResultMetadata } from "../types";
-import { PromptResult } from "./PromptResult";
 
 function clarificationFor(message: Message): ClarificationRequest | null {
   const result = message.metadata?.workflow_result as WorkflowResultMetadata | undefined;
@@ -241,7 +240,7 @@ function AssistantMessage(props: Props) {
             )}
           </div>
         ) : source ? (
-          <PromptResult content={source.content} />
+          <div className="aui-streaming-text">{source.content}</div>
         ) : null}
       </div>
       {source && !clarification && (
