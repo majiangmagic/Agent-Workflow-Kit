@@ -17,6 +17,13 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   workflows: () => request<Workflow[]>("/api/workflows/"),
+  exportWorkflow: async (workflowName: string) => {
+    const response = await fetch(`/api/workflows/${encodeURIComponent(workflowName)}/export`);
+    if (!response.ok) {
+      throw new Error((await response.text()) || `${response.status} ${response.statusText}`);
+    }
+    return response.blob();
+  },
   crews: () => request<Crew[]>("/api/crews/"),
   conversations: (userId: string, crewId: string) => {
     const query = new URLSearchParams({ user_id: userId, crew_id: crewId });

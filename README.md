@@ -16,6 +16,7 @@ SSE 执行事件和 Agent/Workflow DSL 代码生成器。
 - `langgraph-supervisor` 官方监管者运行时适配
 - JSON DSL 生成 Agent/Workflow Python 骨架
 - 浏览器内 Agent/Workflow DSL 可视化设计器
+- 将现有 Workflow 导出为脱离平台和数据库的独立 LangGraph ZIP 包
 - Crew 选择工作流，Conversation 负责持续对话
 - 普通聊天与 SSE 流式执行事件
 - PostgreSQL checkpoint 短期记忆
@@ -337,8 +338,10 @@ Workflow DSL 的 `ui.controls` 可声明页面控件：
 }
 ```
 
-当前支持 `select` 和 `segmented`。值通过 `workflow_inputs` 进入全局 state，并注入
-每个 Agent 节点；前端执行链、标题、说明和控件都随当前 Workflow metadata 变化。
+页面会通用渲染 `select`、`segmented`、开关、文本、数字、范围、日期和文本域等控件；
+未知控件也会根据是否提供 `options` 自动回退为选择框或文本框。值通过
+`workflow_inputs` 进入全局 state，并注入每个 Agent 节点；前端执行链、标题、说明和
+控件都随当前 Workflow metadata 变化。
 
 ## DSL 设计器
 
@@ -349,9 +352,25 @@ Web 工作台右上角的代码按钮可打开 DSL 设计器。它支持：
 - 拖动节点、创建连接、编辑属性
 - 图形画布与 JSON 源码双向同步
 - 调用生成器刷新 Python 骨架
+- 将选中的 Workflow 导出为独立 LangGraph ZIP 包
 
 写文件和生成代码接口只允许本机请求。生成后服务会使 Python import cache 失效并重新
 加载对应模块，新 Agent/Workflow 会直接进入本地 registry，不需要写数据库或重启服务。
+
+### 独立工作流导出
+
+Workflow 页的“导出独立包”会从当前工作流开始递归分析本地 Python import，只收集它
+实际引用的 Agent、业务模块和 LangGraph 适配层。导出的 ZIP：
+
+- 不包含 React、FastAPI、数据库模型、会话表或平台长期记忆
+- 将 PostgreSQL checkpointer 自动替换为 LangGraph `MemorySaver`
+- 保留同一进程和 `thread_id` 内的短期对话状态，进程退出后自动清空
+- 包含 Agent 配置快照、Workflow metadata、原始 Workflow DSL、最小依赖和 `.env.example`
+- 提供 `python -m standalone_workflow` 命令行入口和可嵌入的 `WorkflowRuntime`
+
+如果工作流业务代码直接依赖 `app.api`、`app.db`、`app.models` 或 `app.schemas`，导出会
+明确失败并报告耦合模块，防止生成无法真正脱离平台运行的包。下载接口为
+`GET /api/workflows/{workflow_name}/export`，与 DSL 写入接口一样只允许本机调用。
 
 ## State 与记忆
 

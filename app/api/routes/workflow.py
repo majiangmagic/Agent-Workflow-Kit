@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from app.db.base import get_db
 from app.schemas.crew import CrewCreate, CrewResponse
 from app.services import workflow_service as _workflow_service  # noqa: F401
 from app.services.crew_service import CrewService
+from app.services.workflow_export_service import export_workflow
 from app.services.workflow_service import DEFAULT_WORKFLOW_TYPE
 
 
@@ -46,6 +47,38 @@ async def get_workflows():
             )
         )
     return options
+
+
+@router.get("/{workflow_name}/export")
+async def download_workflow_export(workflow_name: str, request: Request):
+    """Download a database-free standalone LangGraph workflow package."""
+
+    host = request.client.host if request.client else ""
+    if host not in {"127.0.0.1", "::1", "testclient"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Workflow source export is a local-only operation",
+        )
+    try:
+        artifact = export_workflow(workflow_name)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unknown workflow '{workflow_name}'",
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
+    return Response(
+        content=artifact.content,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{artifact.filename}"',
+            "X-Exported-File-Count": str(artifact.file_count),
+        },
+    )
 
 
 @router.post("/{workflow_name}/sample-crew", response_model=CrewResponse)

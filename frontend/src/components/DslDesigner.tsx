@@ -13,7 +13,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ArrowLeft, Bot, Check, Code2, FilePlus2, Save, Sparkles, Trash2, Workflow } from "lucide-react";
+import { ArrowLeft, Bot, Check, Code2, Download, FilePlus2, Save, Sparkles, Trash2, Workflow } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { DslData, DslKind, DslSummary } from "../types";
@@ -321,9 +321,29 @@ export function DslDesigner({
     }
   }
 
+  async function exportStandalone() {
+    setBusy(true);
+    try {
+      const blob = await api.exportWorkflow(documentName);
+      const url = URL.createObjectURL(blob);
+      const anchor = window.document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${documentName}-standalone.zip`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setNotice(`已导出 ${documentName} 独立 LangGraph 包`);
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const nodeFields = useMemo(() => kind === "workflow"
     ? ["display_name", "agent", "agent_package", "extension", "on_error"]
     : ["handler"], [kind]);
+  const canExport = kind === "workflow" && items.some((item) => item.name === documentName);
 
   return (
     <main className="designer-shell">
@@ -336,6 +356,7 @@ export function DslDesigner({
         <div className="designer-actions">
           <button className="secondary-button" disabled={busy} onClick={() => void validate()} type="button"><Check size={15} />校验</button>
           <button className="secondary-button" disabled={busy || !documentName} onClick={() => void save()} type="button"><Save size={15} />保存 DSL</button>
+          {kind === "workflow" && <button className="secondary-button" disabled={busy || !canExport} onClick={() => void exportStandalone()} title="导出当前已生成的 Workflow" type="button"><Download size={15} />导出独立包</button>}
           <button className="send-button" disabled={busy || !documentName} onClick={() => void prepareGeneration()} type="button"><Sparkles size={15} />生成代码</button>
         </div>
       </header>
